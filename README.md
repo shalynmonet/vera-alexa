@@ -65,10 +65,29 @@ Includes an end to end test that starts the server and calls every core tool thr
 | `VERA_DATA` | `data/vera.json` | JSON store |
 | `VERA_CORS_ORIGINS` | `*` | Lock down for production |
 
+## Web simulator (Day 2)
+
+An Echo Show style Alexa+ simulator in the browser: big text, high contrast,
+large buttons, voice in/out via the Web Speech API with a type-to-talk
+fallback, and a natural chat layer (AWS Bedrock, Amazon Nova Lite via the
+Converse API) that calls Vera's MCP tools through tool use. If Bedrock isn't
+reachable or configured, the simulator falls back to simple keyword routing
+so it keeps working.
+
+```powershell
+# with the Vera MCP server already running (see above)
+pip install -r requirements.txt
+python -m web.app   # http://127.0.0.1:8080
+```
+
+Configuration (env vars): `VERA_MCP_URL` (default `http://127.0.0.1:8000/mcp`),
+`WEB_HOST` / `WEB_PORT` (default `127.0.0.1:8080`), `VERA_BEDROCK_MODEL_ID`
+(default `us.amazon.nova-lite-v1:0`), `AWS_REGION` (default `us-east-1`).
+Needs AWS credentials (e.g. via `aws configure`) with `bedrock:InvokeModel`
+on that model.
+
 ## Roadmap
 
-- Web based Alexa+ simulator with Echo Show style screens
-- AWS Bedrock powered conversation layer
 - Optional check in calls and caregiver reports
 
 ## License

@@ -1,8 +1,10 @@
-import { callTool } from "./api.js";
+import { callTool, chat } from "./api.js";
 import { speak, listen, speechRecognitionSupported } from "./speech.js";
 
 const USER_ID = "demo";
 const SCREENS = ["home", "memory", "stretch", "meditation", "progress"];
+const MAX_HISTORY = 20;
+let conversationHistory = [];
 
 const el = (id) => document.getElementById(id);
 
@@ -93,7 +95,7 @@ function tickClock() {
 let pendingAnswer = null; // function(text) | null
 let skipStretchStep = null; // function() | null — resolves the current stretch step early
 
-function routeUtterance(text) {
+async function routeUtterance(text) {
   if (!text) return;
   if (pendingAnswer) {
     const handler = pendingAnswer;
@@ -101,6 +103,19 @@ function routeUtterance(text) {
     handler(text);
     return;
   }
+
+  try {
+    const result = await chat(text, conversationHistory, USER_ID);
+    conversationHistory = (result.history || conversationHistory).slice(-MAX_HISTORY);
+    if (result.reply) await say(result.reply);
+    await handleBedrockToolCalls(result.tool_calls || []);
+    return;
+  } catch {
+    // Bedrock chat isn't configured, or the request failed (network, AWS
+    // permissions, etc). Fall back to simple keyword routing so the demo
+    // still works without it.
+  }
+
   const intent = parseIntent(text);
   if (intent === "home") { showScreen("home"); return; }
   if (intent === "memory") { showScreen("memory"); startMemoryGame(); return; }
@@ -108,6 +123,47 @@ function routeUtterance(text) {
   if (intent === "meditation") { showScreen("meditation"); return; }
   if (intent === "progress") { showScreen("progress"); return; }
   setCaption(`I heard "${text}". Try saying memory game, chair stretch, meditation, or my progress.`);
+}
+
+// Dispatch tool calls Bedrock made during a chat turn to the matching
+// on-screen flow, reusing the already-fetched result instead of calling the
+// MCP tool again.
+async function handleBedrockToolCalls(toolCalls) {
+  for (const call of toolCalls) {
+    switch (call.name) {
+      case "start_memory_game":
+        showScreen("memory");
+        await startMemoryGame(call.result);
+        break;
+      case "submit_memory_answer":
+        if (current !== "memory") showScreen("memory");
+        await renderMemoryResult(call.result);
+        break;
+      case "start_stretch_routine":
+        showScreen("stretch");
+        startStretch(call.result);
+        break;
+      case "start_meditation":
+        showScreen("meditation");
+        el("meditation-select").classList.add("hidden");
+        el("meditation-session").classList.remove("hidden");
+        el("meditation-result").classList.add("hidden");
+        startMeditation(call.args.meditation_id, call.result);
+        break;
+      case "log_completion":
+        if (current === "stretch") await renderActivityCompletion(call.result, "stretch-result");
+        else if (current === "meditation") await renderActivityCompletion(call.result, "meditation-result");
+        break;
+      case "get_fitness_log":
+      case "get_streak":
+      case "check_milestones":
+      case "get_daily_summary":
+        showScreen("progress");
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 function parseIntent(text) {
@@ -155,39 +211,34 @@ async function renderHome() {
 
 // ---------- memory game ----------
 
-async function startMemoryGame() {
+async function startMemoryGame(preloaded) {
   el("memory-result").classList.add("hidden");
   el("memory-again-btn").classList.add("hidden");
   el("memory-listen-btn").classList.add("hidden");
   el("memory-words").classList.add("hidden");
   el("memory-prompt").textContent = "Get ready…";
-  let data;
-  try {
-    data = await callTool("start_memory_game", { user_id: USER_ID });
-  } catch (e) {
-    el("memory-prompt").textContent = "Couldn't start the game. Is the Vera server running?";
-    return;
+  let data = preloaded;
+  if (!data) {
+    try {
+      data = await callTool("start_memory_game", { user_id: USER_ID });
+    } catch (e) {
+      el("memory-prompt").textContent = "Couldn't start the game. Is the Vera server running?";
+      return;
+    }
   }
   el("memory-words").innerHTML = data.words.map((w) => `<span class="word-chip">${escapeHtml(w)}</span>`).join("");
   el("memory-words").classList.remove("hidden");
   el("memory-prompt").textContent = "Listen carefully…";
   await say(data.say);
+  if (current !== "memory") return;
   el("memory-words").classList.add("hidden");
   el("memory-prompt").textContent = "Now tell Vera the words you remember.";
   el("memory-listen-btn").classList.remove("hidden");
   pendingAnswer = submitMemoryAnswer;
 }
 
-async function submitMemoryAnswer(answer) {
+async function renderMemoryResult(result) {
   pendingAnswer = null;
-  el("memory-prompt").textContent = "Let's see how you did…";
-  let result;
-  try {
-    result = await callTool("submit_memory_answer", { answer, user_id: USER_ID });
-  } catch {
-    el("memory-prompt").textContent = "Something went wrong scoring that. Let's try again.";
-    return;
-  }
   el("memory-listen-btn").classList.add("hidden");
   el("memory-prompt").textContent = "";
   el("memory-result").textContent = `You remembered ${result.score} of ${result.total} words.`;
@@ -197,21 +248,42 @@ async function submitMemoryAnswer(answer) {
   await celebrate(result.new_milestones);
 }
 
+async function submitMemoryAnswer(answer) {
+  el("memory-prompt").textContent = "Let's see how you did…";
+  let result;
+  try {
+    result = await callTool("submit_memory_answer", { answer, user_id: USER_ID });
+  } catch {
+    el("memory-prompt").textContent = "Something went wrong scoring that. Let's try again.";
+    return;
+  }
+  await renderMemoryResult(result);
+}
+
 // ---------- chair stretch ----------
 
-async function startStretch() {
+async function renderActivityCompletion(result, resultElId) {
+  el(resultElId).textContent = `Streak: ${result.streak.current} day${result.streak.current === 1 ? "" : "s"}.`;
+  el(resultElId).classList.remove("hidden");
+  await say(result.say);
+  await celebrate(result.new_milestones);
+}
+
+async function startStretch(preloaded) {
   el("stretch-result").classList.add("hidden");
   el("stretch-step-name").textContent = "Getting ready…";
   el("stretch-say").textContent = "";
   el("stretch-progress-fill").style.width = "0%";
   el("stretch-pause-btn").classList.remove("hidden");
   el("stretch-next-btn").classList.remove("hidden");
-  let data;
-  try {
-    data = await callTool("start_stretch_routine", { user_id: USER_ID });
-  } catch {
-    el("stretch-step-name").textContent = "Couldn't start the stretch. Is the Vera server running?";
-    return;
+  let data = preloaded;
+  if (!data) {
+    try {
+      data = await callTool("start_stretch_routine", { user_id: USER_ID });
+    } catch {
+      el("stretch-step-name").textContent = "Couldn't start the stretch. Is the Vera server running?";
+      return;
+    }
   }
   await say(data.say);
   for (const step of data.steps) {
@@ -256,10 +328,7 @@ async function startStretch() {
   } catch {
     return;
   }
-  el("stretch-result").textContent = `Streak: ${result.streak.current} day${result.streak.current === 1 ? "" : "s"}.`;
-  el("stretch-result").classList.remove("hidden");
-  await say(result.say);
-  await celebrate(result.new_milestones);
+  await renderActivityCompletion(result, "stretch-result");
 }
 
 function animateProgress(durationMs) {
@@ -293,16 +362,18 @@ function toggleStretchPause() {
 
 // ---------- meditation ----------
 
-async function startMeditation(meditationId) {
+async function startMeditation(meditationId, preloaded) {
   el("meditation-select").classList.add("hidden");
   el("meditation-session").classList.remove("hidden");
   el("meditation-result").classList.add("hidden");
-  let data;
-  try {
-    data = await callTool("start_meditation", { meditation_id: meditationId, user_id: USER_ID });
-  } catch {
-    el("meditation-text").textContent = "Couldn't start meditation. Is the Vera server running?";
-    return;
+  let data = preloaded;
+  if (!data) {
+    try {
+      data = await callTool("start_meditation", { meditation_id: meditationId, user_id: USER_ID });
+    } catch {
+      el("meditation-text").textContent = "Couldn't start meditation. Is the Vera server running?";
+      return;
+    }
   }
   el("meditation-text").textContent = data.title;
   say(data.say);
@@ -337,10 +408,7 @@ async function startMeditation(meditationId) {
   } catch {
     return;
   }
-  el("meditation-result").textContent = `Streak: ${result.streak.current} day${result.streak.current === 1 ? "" : "s"}.`;
-  el("meditation-result").classList.remove("hidden");
-  await say(result.say);
-  await celebrate(result.new_milestones);
+  await renderActivityCompletion(result, "meditation-result");
   el("meditation-select").classList.remove("hidden");
   el("meditation-session").classList.add("hidden");
 }
@@ -402,7 +470,7 @@ function init() {
   });
 
   el("memory-listen-btn").addEventListener("click", captureSpeech);
-  el("memory-again-btn").addEventListener("click", startMemoryGame);
+  el("memory-again-btn").addEventListener("click", () => startMemoryGame());
 
   el("stretch-pause-btn").addEventListener("click", toggleStretchPause);
   el("stretch-next-btn").addEventListener("click", () => {
