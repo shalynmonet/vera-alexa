@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Vera</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <button id="home-btn" aria-label="Go home">🏠</button>
+    <div id="greeting-small">Vera</div>
+    <div id="clock"></div>
+  </header>
+
+  <main id="screen-root">
+
+    <section id="screen-home" class="screen">
+      <h1 id="home-greeting">Hello</h1>
+      <p id="home-sub">Let's see what Vera has for you today.</p>
+      <div class="tiles">
+        <button class="tile" data-intent="memory">
+          <span class="tile-icon">🧠</span>
+          <span class="tile-label">Memory Game</span>
+        </button>
+        <button class="tile" data-intent="stretch">
+          <span class="tile-icon">🪑</span>
+          <span class="tile-label">Chair Stretch</span>
+        </button>
+        <button class="tile" data-intent="meditation">
+          <span class="tile-icon">🧘</span>
+          <span class="tile-label">Meditation</span>
+        </button>
+        <button class="tile" data-intent="progress">
+          <span class="tile-icon">📅</span>
+          <span class="tile-label">My Progress</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="screen-memory" class="screen hidden">
+      <h1 class="screen-title">Memory Game</h1>
+      <div id="memory-prompt" class="big-text"></div>
+      <div id="memory-words" class="words-display hidden"></div>
+      <div id="memory-result" class="result-box hidden"></div>
+      <div class="action-row">
+        <button id="memory-listen-btn" class="primary-btn hidden">🎤 Tell Vera the Words</button>
+        <button id="memory-again-btn" class="primary-btn hidden">Play Again</button>
+      </div>
+    </section>
+
+    <section id="screen-stretch" class="screen hidden">
+      <h1 class="screen-title">Chair Stretch</h1>
+      <div id="stretch-video" class="video-box">🪑</div>
+      <div id="stretch-step-name" class="big-text"></div>
+      <div id="stretch-say" class="say-text"></div>
+      <div class="progress-bar"><div id="stretch-progress-fill" class="progress-fill"></div></div>
+      <div id="stretch-result" class="result-box hidden"></div>
+      <div class="action-row">
+        <button id="stretch-pause-btn" class="secondary-btn">Pause</button>
+        <button id="stretch-next-btn" class="secondary-btn">Skip Step</button>
+      </div>
+    </section>
+
+    <section id="screen-meditation" class="screen hidden">
+      <h1 class="screen-title">Meditation</h1>
+      <div id="meditation-select" class="tiles small">
+        <button class="tile" data-med="short_calm">
+          <span class="tile-icon">🕊️</span><span class="tile-label">3 Minute Calm</span>
+        </button>
+        <button class="tile" data-med="long_calm">
+          <span class="tile-icon">🌙</span><span class="tile-label">10 Minute Calm</span>
+        </button>
+        <button class="tile" data-med="bedtime">
+          <span class="tile-icon">⭐</span><span class="tile-label">Bedtime Wind Down</span>
+        </button>
+      </div>
+      <div id="meditation-session" class="hidden">
+        <div id="meditation-circle">10:00</div>
+        <div id="meditation-text" class="say-text"></div>
+        <div id="meditation-result" class="result-box hidden"></div>
+        <div class="action-row">
+          <button id="meditation-stop-btn" class="secondary-btn">I'm Done</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-progress" class="screen hidden">
+      <h1 class="screen-title">My Progress</h1>
+      <div id="progress-streak" class="big-text"></div>
+      <div id="progress-week" class="say-text"></div>
+      <div id="progress-calendar" class="calendar-grid"></div>
+      <h2 class="section-sub">Badges Earned</h2>
+      <div id="progress-badges" class="badge-row"></div>
+    </section>
+
+  </main>
+
+  <div id="caption" class="hidden"></div>
+
+  <footer id="bottombar">
+    <div id="type-row" class="hidden">
+      <input id="type-input" type="text" placeholder="Type what you want to say…" autocomplete="off" />
+      <button id="type-send" class="secondary-btn">Send</button>
+    </div>
+    <div id="controls-row">
+      <button id="type-toggle" class="secondary-btn">⌨️ Type Instead</button>
+      <button id="mic-btn" aria-label="Talk to Vera">🎤</button>
+    </div>
+    <div id="mic-hint">Tap the microphone and talk to Vera</div>
+  </footer>
+
+  <div id="celebration" class="hidden"></div>
+
+</div>
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>
