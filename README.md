@@ -1,6 +1,6 @@
 # Vera
 
-A warm wellness companion for older adults, built for Alexa+. Vera keeps minds and bodies busy with a memory game, a guided chair stretch, and guided meditation, and celebrates progress with a visual fitness log of streaks and milestones. Caregivers get a simple daily summary.
+A warm wellness companion for older adults, built for Alexa+. Vera keeps minds and bodies busy with four games, guided exercise routines, and guided meditation, and celebrates progress with a visual fitness log of streaks and milestones. Caregivers get a simple daily summary.
 
 Vera is named after my late great-grandmother and inspired by caring for my grandmother.
 
@@ -14,6 +14,12 @@ Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the o
 | `list_profiles`, `create_profile` | Everyone sharing this Vera, for the start screen's profile picker |
 | `start_memory_game` | Picks 3 to 6 familiar words for Vera to read aloud |
 | `submit_memory_answer` | Scores the spoken answer (forgiving of order and mishearings), adapts difficulty, logs the game |
+| `start_matching_game` | Deals 6 to 12 cards (large pictures) for a flip-to-match round; difficulty is the pair count |
+| `submit_matching_result` | Logs a finished matching round from how many flips it took, adapts difficulty |
+| `start_saying_game` | Starts a "Finish the Saying" round (classic proverbs, multiple choice); difficulty is sayings per round |
+| `submit_saying_answer` | Grades one answer and returns the next question, or the final score once the round is done |
+| `start_category_game` | Starts a word categories round (name things in a category); difficulty is the target item count |
+| `submit_category_answer` | Scores a free-form list of named items forgivingly, adapts difficulty, logs the game |
 | `list_sessions` | Available games, exercise routines, and meditations, each flagged whether its real recording exists yet |
 | `start_stretch_routine` | A guided exercise routine (chair stretch, seated strength, balance, gentle walking): real video if recorded, step by step narration either way |
 | `start_meditation` | A guided meditation: real audio/video if recorded, or an intro line and target length otherwise |
@@ -25,6 +31,19 @@ Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the o
 | `get_daily_summary` | Caregiver friendly summary of the day, including self-reported activities |
 
 **Design choices for older users:** every activity counts toward the streak, one missed day is forgiven (grace day), and missed days are never framed as failures.
+
+### Games
+
+Four games, each with its own logic module (`vera/memory_game.py`, `matching_game.py`,
+`saying_game.py`, `word_categories.py`), adaptive difficulty, and self-logging
+to the fitness log:
+
+- **Memory Game** -- Vera reads a short list of words; say or type back as many as you remember.
+- **Matching Pairs** -- flip cards (6 to 12, large pictures) to find the matches.
+- **Finish the Saying** -- classic proverbs, multiple choice, one question at a time.
+- **Word Categories** -- name as many things as you can in a category (fruits, animals, colors, furniture, vegetables), scored forgivingly like the memory game.
+
+Playing all four at least once earns the "Tried Every Game" badge.
 
 ### Exercise and meditation media
 
