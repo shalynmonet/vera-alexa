@@ -4,10 +4,32 @@ import { Companion } from "./companion.js";
 
 const SCREENS = ["start", "home", "games", "memory", "exercise", "stretch", "meditation", "progress"];
 const MAX_HISTORY = 20;
+const REMEMBERED_USER_KEY = "vera_user_id";
 let conversationHistory = [];
 let currentUserId = null;
 
 const el = (id) => document.getElementById(id);
+
+// Remembering the chosen profile is a per-viewer convenience (skip the
+// picker next visit on this device), not a source of truth -- the server
+// still owns the real profile data, so a blocked/cleared store just means
+// falling back to the picker.
+function getRememberedUserId() {
+  try {
+    return localStorage.getItem(REMEMBERED_USER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberUserId(userId) {
+  try {
+    localStorage.setItem(REMEMBERED_USER_KEY, userId);
+  } catch {
+    // Storage unavailable (private browsing, blocked, etc) -- the picker
+    // will just show again next visit, which is a fine fallback.
+  }
+}
 
 // ---------- shared chrome: screen router, companion speech, celebrations ----------
 
@@ -121,6 +143,7 @@ async function renderStart() {
 function selectProfile(userId) {
   currentUserId = userId;
   conversationHistory = [];
+  rememberUserId(userId);
   showScreen("home");
 }
 
@@ -614,7 +637,13 @@ function init() {
     el("type-row").classList.remove("hidden");
   }
 
-  showScreen("start");
+  const remembered = getRememberedUserId();
+  if (remembered) {
+    currentUserId = remembered;
+    showScreen("home");
+  } else {
+    showScreen("start");
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);
