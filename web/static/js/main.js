@@ -3,7 +3,12 @@ import { listen, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
 
-const SCREENS = ["start", "home", "games", "memory", "matching", "saying", "category", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity"];
+const SCREENS = ["start", "home", "games", "memory", "matching", "saying", "category", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity", "cheers"];
+const PARENT_SCREEN = {
+  games: "home", memory: "games", matching: "games", saying: "games", category: "games",
+  exercise: "home", stretch: "exercise", "log-activity": "exercise", "timed-activity": "exercise",
+  meditation: "home", progress: "home", cheers: "home",
+};
 const GAME_ICONS = { memory_game: "🧠", matching_game: "🃏", saying_game: "📜", category_game: "🗂️" };
 const ENCOURAGEMENTS = [
   "You're doing wonderfully. Keep it up!",
@@ -61,11 +66,18 @@ function clearActiveTimers() {
 }
 
 function showScreen(name) {
+  const leaving = current;
   clearActiveTimers();
   Companion.setVideoMode(false);
+  if (leaving === "meditation" && name !== "meditation") stopMeditationEarly();
+  if (leaving === "stretch" && name !== "stretch") {
+    const video = el("stretch-video").querySelector("video");
+    if (video) video.pause();
+  }
   SCREENS.forEach((s) => el(`screen-${s}`).classList.toggle("hidden", s !== name));
   current = name;
   Companion.placeInScreen(name);
+  el("back-btn").classList.toggle("hidden", !PARENT_SCREEN[name]);
   if (name === "start") renderStart();
   if (name === "home") renderHome();
   if (name === "games") renderGamesList();
@@ -76,6 +88,12 @@ function showScreen(name) {
   }
   if (name === "progress") renderProgress();
   if (name === "log-activity") resetLogActivity();
+  if (name === "cheers") renderCheersScreen();
+}
+
+function goBack() {
+  const parent = PARENT_SCREEN[current];
+  if (parent) showScreen(parent);
 }
 
 async function say(text) {
@@ -407,6 +425,7 @@ async function captureSpeech() {
 async function renderHome() {
   el("home-greeting").textContent = `${greetingWord()}`;
   el("home-sub").textContent = "Let's see what Vera has for you today.";
+  updateHomeCheersBadge();
   let profile, streak;
   try {
     profile = await callTool("get_profile", { user_id: currentUserId });
@@ -421,9 +440,11 @@ async function renderHome() {
     return;
   }
 
-  // Proactive greeting: Vera speaks up first, once per app open/profile,
-  // pulling in the daily summary, streak, an upcoming milestone, and a
-  // memory herself -- rather than a generic line repeated on every visit.
+  // Proactive greeting: Vera speaks up first, once per app visit, pulling
+  // in the daily summary, streak, an upcoming milestone, and a memory
+  // herself. Coming back to Home later in the same visit just shows a
+  // short caption -- no repeated spoken greeting until the app is opened
+  // fresh again (a new page load resets greetedThisSession).
   if (!greetedThisSession) {
     greetedThisSession = true;
     let greeted = false;
@@ -443,41 +464,73 @@ async function renderHome() {
         : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
     }
     await tryPlayNextCheer({ onAppOpen: true });
-    await renderFamilyShelf();
     return;
   }
 
-  await say(streak > 0
-    ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
-    : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
-  await renderFamilyShelf();
+  el("home-sub").textContent = "What would you like to do next?";
 }
 
-async function renderFamilyShelf() {
-  const shelf = el("family-shelf");
+// Home's Cheers card shows a quick count of what's waiting, without
+// revealing any content -- the full shelf lives on its own screen now.
+async function updateHomeCheersBadge() {
+  const badge = el("home-cheers-badge");
   let cheers;
   try {
     cheers = (await callTool("list_cheers", { user_id: currentUserId })).cheers;
   } catch {
-    shelf.classList.add("hidden");
+    badge.classList.add("hidden");
+    return;
+  }
+  const newCount = cheers.filter((c) => c.status === "unlocked").length;
+  const lockedCount = cheers.filter((c) => c.status === "locked").length;
+  if (!newCount && !lockedCount) {
+    badge.classList.add("hidden");
+    return;
+  }
+  const parts = [];
+  if (newCount) parts.push(`${newCount} new`);
+  if (lockedCount) parts.push(`${lockedCount} locked`);
+  badge.textContent = parts.join(" · ");
+  badge.classList.remove("hidden");
+}
+
+async function renderCheersScreen() {
+  const content = el("cheers-content");
+  content.innerHTML = `<div class="say-text">Loading…</div>`;
+  let cheers;
+  try {
+    cheers = (await callTool("list_cheers", { user_id: currentUserId })).cheers;
+  } catch {
+    content.innerHTML = `<div class="say-text">Couldn't reach Vera's server.</div>`;
     return;
   }
   const unlocked = cheers.filter((c) => c.status === "unlocked");
   const played = cheers.filter((c) => c.status === "played");
   const lockedCount = cheers.filter((c) => c.status === "locked").length;
+
   if (!unlocked.length && !played.length && !lockedCount) {
-    shelf.classList.add("hidden");
+    content.innerHTML = `<div class="say-text">No cheers from family yet.</div>`;
     return;
   }
-  shelf.classList.remove("hidden");
-  const cards = [];
-  unlocked.forEach((c) => cards.push(`<button class="tile family-shelf-card" data-cheer-id="${escapeHtml(c.id)}">💜 A message from ${escapeHtml(c.family_name)}</button>`));
-  played.forEach((c) => cards.push(`<button class="tile family-shelf-card played" data-cheer-id="${escapeHtml(c.id)}">↻ Replay ${escapeHtml(c.family_name)}'s message</button>`));
-  if (lockedCount) {
-    cards.push(`<div class="tile family-shelf-card locked">🔒 ${lockedCount} surprise${lockedCount === 1 ? "" : "s"} from family waiting. Keep going to unlock ${lockedCount === 1 ? "it" : "them"}!</div>`);
+
+  const groups = [];
+  if (unlocked.length) {
+    groups.push(`<h2 class="section-sub">New</h2><div class="family-shelf-list">`
+      + unlocked.map((c) => `<button class="tile family-shelf-card" data-cheer-id="${escapeHtml(c.id)}">💜 A message from ${escapeHtml(c.family_name)}</button>`).join("")
+      + `</div>`);
   }
-  el("family-shelf-list").innerHTML = cards.join("");
-  el("family-shelf-list").querySelectorAll(".family-shelf-card[data-cheer-id]").forEach((btn) => {
+  if (played.length) {
+    groups.push(`<h2 class="section-sub">Played (tap to replay)</h2><div class="family-shelf-list">`
+      + played.map((c) => `<button class="tile family-shelf-card played" data-cheer-id="${escapeHtml(c.id)}">↻ Replay ${escapeHtml(c.family_name)}'s message</button>`).join("")
+      + `</div>`);
+  }
+  if (lockedCount) {
+    groups.push(`<h2 class="section-sub">Still Locked</h2><div class="family-shelf-list">`
+      + `<div class="tile family-shelf-card locked">🔒 ${lockedCount} surprise${lockedCount === 1 ? "" : "s"} from family waiting. Keep going to unlock ${lockedCount === 1 ? "it" : "them"}!</div>`
+      + `</div>`);
+  }
+  content.innerHTML = groups.join("");
+  content.querySelectorAll(".family-shelf-card[data-cheer-id]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const cheer = cheers.find((c) => c.id === btn.dataset.cheerId);
       if (!cheer) return;
@@ -485,7 +538,7 @@ async function renderFamilyShelf() {
       if (cheer.status !== "played") {
         try { await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId }); } catch { /* not fatal */ }
       }
-      renderFamilyShelf();
+      renderCheersScreen();
     });
   });
 }
@@ -991,6 +1044,27 @@ async function renderMeditationList() {
   });
 }
 
+// Whether a meditation track/timer is actively running right now -- so
+// leaving the screen (Back, Home, voice nav, a /tv handoff, or just
+// closing the tab) can stop it immediately and skip logging, since only
+// an actual finish (the track's own "ended" event, or the synthetic
+// countdown reaching zero) should count.
+let meditationState = "idle"; // "idle" | "playing"
+
+function pauseMeditationMedia() {
+  const mediaEl = el("meditation-media-wrap").querySelector("audio, video");
+  if (mediaEl) mediaEl.pause();
+}
+
+// Called when the person leaves mid-session by any route other than the
+// track finishing on its own -- never logs, never credits the activity.
+function stopMeditationEarly() {
+  if (meditationState !== "playing") return;
+  meditationState = "idle";
+  pauseMeditationMedia();
+  say("That's okay, we can finish another time.");
+}
+
 async function finishMeditation(data, meditationId) {
   if (current !== "meditation") return;
   let result;
@@ -1020,14 +1094,25 @@ function runRealMeditationMedia(data, meditationId) {
     if (data.type === "video") mediaEl.playsInline = true;
     wrap.appendChild(mediaEl);
     Companion.setVideoMode(true);
+    meditationState = "playing";
 
-    const finish = async () => {
+    const finishIfStillHere = async (completed) => {
+      if (meditationState !== "playing") { resolve(); return; } // already stopped early elsewhere
+      meditationState = "idle";
       Companion.setVideoMode(false);
-      await finishMeditation(data, meditationId);
+      if (completed) await finishMeditation(data, meditationId);
       resolve();
     };
-    mediaEl.addEventListener("ended", finish);
-    el("meditation-stop-btn").onclick = () => { mediaEl.pause(); finish(); };
+    mediaEl.addEventListener("ended", () => finishIfStillHere(true));
+    el("meditation-stop-btn").onclick = () => {
+      mediaEl.pause();
+      meditationState = "idle";
+      Companion.setVideoMode(false);
+      el("meditation-session").classList.add("hidden");
+      renderMeditationList();
+      say("That's okay, we can finish another time.");
+      resolve();
+    };
     mediaEl.play().catch(() => {});
   });
 }
@@ -1044,18 +1129,26 @@ async function runSyntheticMeditationTimer(data, meditationId) {
   };
   render();
   Companion.setVideoMode(true);
+  meditationState = "playing";
 
-  await new Promise((resolve) => {
-    const finish = () => { clearInterval(id); resolve(); };
-    el("meditation-stop-btn").onclick = finish;
+  const completed = await new Promise((resolve) => {
+    const finish = (done) => { clearInterval(id); resolve(done); };
+    el("meditation-stop-btn").onclick = () => {
+      el("meditation-session").classList.add("hidden");
+      renderMeditationList();
+      say("That's okay, we can finish another time.");
+      finish(false);
+    };
     const id = trackTimer(setInterval(() => {
       remaining -= 1;
       render();
-      if (remaining <= 0) finish();
+      if (remaining <= 0) finish(true);
     }, 1000));
   });
+  if (meditationState !== "playing") return; // stopped early via another route already handled it
+  meditationState = "idle";
   Companion.setVideoMode(false);
-  await finishMeditation(data, meditationId);
+  if (completed) await finishMeditation(data, meditationId);
 }
 
 async function startMeditation(meditationId, preloaded) {
@@ -1175,10 +1268,13 @@ async function finishTimedActivity() {
 
 // ---------- progress / fitness log ----------
 
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 async function renderProgress() {
   el("progress-streak").textContent = "Loading…";
   el("progress-calendar").innerHTML = "";
   el("progress-badges").innerHTML = "";
+  el("progress-calendar-weekday-row").innerHTML = WEEKDAY_LABELS.map((w) => `<span>${w}</span>`).join("");
   el("for-family-link").href = `/caregiver/${encodeURIComponent(currentUserId)}`;
   let log;
   try {
@@ -1195,17 +1291,22 @@ async function renderProgress() {
     (log.week.goal_met ? " — goal met!" : "");
 
   const dayLabel = (iso) => new Date(iso + "T00:00:00").getDate();
-  el("progress-calendar").innerHTML = log.calendar
-    .map((d) => `<div class="cal-cell${d.active ? " active" : ""}" title="${d.date}">${dayLabel(d.date)}</div>`)
-    .join("");
+  el("progress-calendar").innerHTML = log.calendar_weeks.flat().map((d) => {
+    const classes = ["cal-cell"];
+    if (d.active) classes.push("active");
+    if (d.is_today) classes.push("today");
+    if (d.is_future) classes.push("future");
+    return `<div class="${classes.join(" ")}" data-date="${d.date}" title="${d.date}">
+      <span>${dayLabel(d.date)}</span>${d.active ? `<span class="cal-check">✓</span>` : ""}
+    </div>`;
+  }).join("");
+  el("progress-calendar").querySelectorAll(".cal-cell:not(.future)").forEach((cell) => {
+    cell.addEventListener("click", () => showDayDetail(cell.dataset.date));
+  });
 
-  if (!log.milestones.length) {
-    el("progress-badges").innerHTML = `<div class="say-text">No badges yet — they're on the way!</div>`;
-  } else {
-    el("progress-badges").innerHTML = log.milestones
-      .map((m) => `<div class="badge">🏅 ${escapeHtml(m.title)}</div>`)
-      .join("");
-  }
+  el("progress-badges").innerHTML = !log.badges_summary.length
+    ? `<div class="say-text">No badges yet — they're on the way!</div>`
+    : log.badges_summary.map((b) => `<div class="badge">🏅 ${escapeHtml(b.title)}${b.count > 1 ? ` ×${b.count}` : ""}</div>`).join("");
 
   let trends = [];
   try {
@@ -1218,6 +1319,47 @@ async function renderProgress() {
     : `<div class="say-text">Play a few games this month to see how it's going.</div>`;
 }
 
+const GAME_TYPES = new Set(["memory_game", "matching_game", "saying_game", "category_game"]);
+
+function describeActivity(a) {
+  const label = a.type.replace(/_/g, " ");
+  if (GAME_TYPES.has(a.type)) {
+    const d = a.details || {};
+    if ("score" in d && "total" in d) return `${label}: ${d.score} of ${d.total}`;
+    if ("count" in d && "target" in d) return `${label}: named ${d.count} of ${d.target}`;
+    if ("attempts" in d) return `${label}: ${d.attempts} flips`;
+    return label;
+  }
+  const feeling = a.details && a.details.feeling ? `, felt ${a.details.feeling}` : "";
+  return `${label}: ${a.minutes} minutes${feeling}`;
+}
+
+async function showDayDetail(dateIso) {
+  const overlay = el("day-detail-overlay");
+  const body = el("day-detail-body");
+  el("day-detail-title").textContent = new Date(dateIso + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  body.innerHTML = `<p class="say-text">Loading…</p>`;
+  overlay.classList.remove("hidden");
+  let detail;
+  try {
+    detail = await callTool("get_day_detail", { user_id: currentUserId, on_date: dateIso });
+  } catch {
+    body.innerHTML = `<p class="say-text">Couldn't reach Vera's server.</p>`;
+    return;
+  }
+  const parts = [];
+  parts.push(detail.activities.length
+    ? `<h3 class="section-sub">Activities</h3><ul class="day-detail-list">${detail.activities.map((a) => `<li>${escapeHtml(describeActivity(a))}</li>`).join("")}</ul>`
+    : `<p class="say-text">Nothing logged this day.</p>`);
+  if (detail.badges.length) {
+    parts.push(`<h3 class="section-sub">Badges Earned</h3><ul class="day-detail-list">${detail.badges.map((b) => `<li>🏅 ${escapeHtml(b.title)}</li>`).join("")}</ul>`);
+  }
+  if (detail.cheers_played.length) {
+    parts.push(`<h3 class="section-sub">Cheers Played</h3><ul class="day-detail-list">${detail.cheers_played.map((c) => `<li>💜 A message from ${escapeHtml(c.family_name)}</li>`).join("")}</ul>`);
+  }
+  body.innerHTML = parts.join("");
+}
+
 // ---------- wiring ----------
 
 function init() {
@@ -1226,6 +1368,8 @@ function init() {
   tickClock();
 
   el("home-btn").addEventListener("click", () => showScreen(currentUserId ? "home" : "start"));
+  el("back-btn").addEventListener("click", goBack);
+  el("day-detail-close-btn").addEventListener("click", () => el("day-detail-overlay").classList.add("hidden"));
   el("switch-profile-btn").addEventListener("click", () => showScreen("start"));
 
   el("add-profile-btn").addEventListener("click", () => {
@@ -1305,10 +1449,15 @@ function init() {
     "stretch-display-banner", "stretch-detail",
   ));
   el("stretch-bring-back-btn").addEventListener("click", () => bringBackFromDisplay("stretch-display-banner", "stretch-detail"));
-  el("meditation-to-tv-btn").addEventListener("click", () => sendToDisplay(
-    { type: "meditation", title: "Meditation", say: el("meditation-text").textContent },
-    "meditation-display-banner", "meditation-detail",
-  ));
+  el("meditation-to-tv-btn").addEventListener("click", () => {
+    // The TV mirrors the session; the main screen's own copy of the audio
+    // stops rather than keep playing invisibly behind the banner.
+    pauseMeditationMedia();
+    sendToDisplay(
+      { type: "meditation", title: "Meditation", say: el("meditation-text").textContent },
+      "meditation-display-banner", "meditation-detail",
+    );
+  });
   el("meditation-bring-back-btn").addEventListener("click", () => bringBackFromDisplay("meditation-display-banner", "meditation-detail"));
 
   el("mic-btn").addEventListener("click", captureSpeech);

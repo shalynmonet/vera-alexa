@@ -422,7 +422,11 @@ def log_activity(activity: str, minutes: float, user_id: str = "demo", feeling: 
 @mcp.tool()
 def get_fitness_log(user_id: str = "demo", days: int = 28, on_date: str | None = None) -> dict:
     """Activity calendar for the on screen fitness log (one entry per day, oldest
-    first), plus totals, streak, this week's goal progress, and earned badges."""
+    first), plus totals, streak, this week's goal progress, and earned badges.
+    calendar_weeks is the same history grouped into 5 Sunday-Saturday rows for
+    the Progress screen's calendar grid; badges_summary collapses a repeatable
+    badge (like Weekly Goal Met) into one card with a count instead of one per
+    time it was earned."""
     u = store.get_user(user_id)
     day = _today(on_date)
     acts = u["activities"]
@@ -432,12 +436,23 @@ def get_fitness_log(user_id: str = "demo", days: int = 28, on_date: str | None =
     return {
         "name": u["name"],
         "calendar": progress.calendar(acts, day, max(7, min(90, days))),
+        "calendar_weeks": progress.calendar_weeks(acts, day),
         "totals": totals,
         "total_minutes": round(sum(a["minutes"] for a in acts)),
         "streak": progress.streaks(acts, day),
         "week": progress.week_summary(acts, day, u["weekly_goal_days"]),
         "milestones": u["milestones"],
+        "badges_summary": progress.badge_summary(u["milestones"]),
     }
+
+
+@mcp.tool()
+def get_day_detail(user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Everything that happened on one day -- for tapping a square on the
+    Progress calendar: activities logged (minutes, feeling, game scores),
+    cheers that played, and any badges newly earned that day."""
+    u = store.get_user(user_id)
+    return progress.day_detail(u, _today(on_date))
 
 
 @mcp.tool()

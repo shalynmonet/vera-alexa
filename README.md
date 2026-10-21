@@ -59,7 +59,8 @@ The included **web simulator** (`web/app.py`) exists so this could be built and 
 | `start_meditation` | A guided meditation: real audio/video if recorded, or an intro line and target length otherwise |
 | `log_completion` | Records a finished guided stretch/exercise or meditation session, returns streak and new milestones |
 | `log_activity` | Logs a self-reported activity with no guided session -- a walk, bike or stationary bike ride, gardening, dancing, swimming, or anything else by name -- toward the same streak, goal, and milestones |
-| `get_fitness_log` | Calendar grid, totals, streak, weekly goal (days and minutes), badges |
+| `get_fitness_log` | Calendar grid (both a flat list and 5 Sunday-Saturday weeks), totals, streak, weekly goal, and badges deduplicated with a count (e.g. "Weekly Goal Met ×3") |
+| `get_day_detail` | Everything that happened on one day -- activities, game scores, cheers played, badges earned -- for tapping a square on the Progress calendar |
 | `get_streak` | Current and longest streak |
 | `check_milestones` | Awards any newly earned badges |
 | `get_daily_summary` | Caregiver friendly summary of the day, including self-reported activities |
@@ -164,11 +165,12 @@ play back to back. The same `next_cheer` call drives every delivery
 moment: a newly earned milestone ("Someone has a message for you!"), a
 workout's step-break pause (one at most, full screen, "voice + photo"
 cheers showing the photo while the audio plays), and app open ("You have a
-message from Jake"). Home's **Messages from Family** shelf shows every
-`unlocked` cheer, lets you replay any `played` one, and shows a locked
-count without revealing anything ("2 surprises from family waiting").
-Either the person or the caregiver can `delete_cheer` any cheer at any
-time.
+message from Jake"). Home's **Cheers** card shows a count of what's
+waiting (new and still locked) without revealing anything; tapping it
+opens its own screen with every `unlocked` cheer, any `played` one
+available to replay, and a locked count ("2 surprises from family
+waiting"). Either the person or the caregiver can `delete_cheer` any cheer
+at any time.
 
 **Alerts:** `check_family_alerts` finds any family member whose unlocked
 queue just dropped to 1 or 0 (opted into email) and the caregiver
@@ -301,8 +303,7 @@ For this submission, the MCP server (`server.py`) runs locally, the same `python
 
 ## Web simulator
 
-An Echo Show style Alexa+ simulator in the browser, matching the look of the
-[Vera Cares](https://vera-cares.lovable.app/) site: big text, high contrast,
+An Echo Show style Alexa+ simulator in the browser: big text, high contrast,
 large buttons, and a natural chat layer (AWS Bedrock, Amazon Nova Lite via
 the Converse API) that calls Vera's MCP tools through tool use. If Bedrock
 isn't reachable or configured, the simulator falls back to simple keyword
@@ -324,9 +325,11 @@ A start screen lets each person in the household pick their own profile
 shared Echo -- so progress is kept separately per person. The choice is
 remembered per device (localStorage), so future visits skip straight to
 Home; tapping "Not you? Switch person" brings the picker back. From there,
-home has four sections -- Games, Exercise, Meditations, Progress -- each
-backed by its own MCP tool(s) so new games or routines show up
-automatically.
+home has five sections -- Games, Exercise, Meditations, Progress, Cheers --
+each backed by its own MCP tool(s) so new games or routines show up
+automatically. Every screen but Home has a clearly labeled "← Back" button
+to its parent screen (Home's own tiles are the entry points, so it needs
+none), alongside the Home button.
 
 Vera herself is a persistent on-screen companion (a purple elephant) built
 from `web/static/js/companion.js`: large and centered on the start/home
@@ -337,7 +340,11 @@ section has its own idle pose (thinking for Games, exercising for Exercise,
 meditating for Meditations, celebrating for Progress), with a gentle idle
 bob and talk/celebrate bounce that respects `prefers-reduced-motion`. Poses
 are plain images today; the module is structured so any pose can later
-become a looping video without touching call sites.
+become a looping video without touching call sites. Each pose's image is
+background-removed with [rembg](https://github.com/danielgatis/rembg) so
+Vera sits directly on whatever screen is behind her (including the `/tv`
+display) instead of inside a white box; the originals are kept in
+`web/static/img/originals/`.
 
 ```powershell
 # with the Vera MCP server already running (see above)

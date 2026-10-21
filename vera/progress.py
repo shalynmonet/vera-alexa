@@ -63,6 +63,63 @@ def calendar(activities: list[dict], today: date, days: int = 28) -> list[dict]:
     return out
 
 
+def calendar_weeks(activities: list[dict], today: date, weeks: int = 5) -> list[list[dict]]:
+    """The last `weeks` calendar weeks (Sunday through Saturday) as full
+    rows, today's week included even though part of it hasn't happened
+    yet -- those later days come back marked is_future so the UI can grey
+    them out instead of treating them as missed."""
+    by_day: dict[str, list[str]] = {}
+    for a in activities:
+        by_day.setdefault(a["date"], []).append(a["type"])
+    days_since_sunday = (today.weekday() + 1) % 7  # Monday=0..Sunday=6 -> Sunday=0
+    this_sunday = today - timedelta(days=days_since_sunday)
+    start = this_sunday - timedelta(weeks=weeks - 1)
+    rows = []
+    d = start
+    for _ in range(weeks):
+        row = []
+        for _ in range(7):
+            iso = d.isoformat()
+            row.append({
+                "date": iso,
+                "active": iso in by_day,
+                "activities": sorted(set(by_day.get(iso, []))),
+                "is_today": d == today,
+                "is_future": d > today,
+            })
+            d += timedelta(days=1)
+        rows.append(row)
+    return rows
+
+
+def badge_summary(milestones: list[dict]) -> list[dict]:
+    """Collapse repeated milestones (like Weekly Goal Met, earned anew each
+    week) into one card per badge type with a count, for the Progress
+    screen -- the day-by-day detail still shows each time one was earned."""
+    order: list[str] = []
+    counts: dict[str, int] = {}
+    titles: dict[str, str] = {}
+    for m in milestones:
+        if m["id"] not in counts:
+            order.append(m["id"])
+            titles[m["id"]] = m["title"]
+        counts[m["id"]] = counts.get(m["id"], 0) + 1
+    return [{"id": mid, "title": titles[mid], "count": counts[mid]} for mid in order]
+
+
+def day_detail(user: dict, day: date) -> dict:
+    """Everything that happened on one day, for tapping a calendar square:
+    activities logged (with minutes/feeling/game scores), cheers that
+    played, and badges newly earned."""
+    iso = day.isoformat()
+    return {
+        "date": iso,
+        "activities": [a for a in user["activities"] if a["date"] == iso],
+        "cheers_played": [c for c in user.get("cheers", []) if c.get("played_on") == iso],
+        "badges": [m for m in user["milestones"] if m["earned_on"] == iso],
+    }
+
+
 # id -> (title, celebration line, test(activities, counts, streak_info, week, game_perfect))
 MILESTONES = [
     ("first_session", "First Session", "You've started something wonderful."),

@@ -33,6 +33,7 @@ const SECTION_POSE = {
   "timed-activity": "exercising",
   meditation: "meditating",
   progress: "celebrating",
+  cheers: "celebrating",
 };
 
 let root, img, bubble;

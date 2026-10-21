@@ -109,9 +109,9 @@ def _new_cheer(cheer_type, target, status, days_ago, played=False):
     }
 
 # One attached to the badge this demo is set up to earn live today (still
-# locked -- that's the point), plus a few already on the Home shelf so it
-# doesn't look empty: an anytime one waiting to play, and a couple already
-# played (replayable) from "earlier this week".
+# locked -- that's the point), plus a few already on the Cheers screen so
+# it doesn't look empty: an anytime one waiting to play, and a couple
+# already played (replayable) from "earlier this week".
 user["cheers"] = [
     _new_cheer("milestone", "streak_7", "locked", days_ago=1),
     _new_cheer("anytime", None, "unlocked", days_ago=2),
@@ -124,5 +124,5 @@ s = progress.streaks(user["activities"], today)
 print(f"Seeded {args.name}: {len(user['activities'])} sessions, current streak {s['current']}, "
       f"badges {[m['title'] for m in user['milestones']]}")
 print(f"Family: Jake is one cheer away from celebrating {args.name}'s 7 Day Streak -- "
-      "finish one more session today to see it play. The Home shelf also has "
+      "finish one more session today to see it play. The Cheers screen also has "
       "an anytime cheer waiting and two already played, ready to replay.")

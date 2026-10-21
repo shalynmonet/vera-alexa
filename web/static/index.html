@@ -13,8 +13,11 @@
 <div id="app">
 
   <header id="topbar">
-    <button id="home-btn" aria-label="Go home">🏠</button>
-    <a id="brand-link" href="https://vera-cares.lovable.app/" target="_blank" rel="noopener">Part of Vera Cares ↗</a>
+    <div id="topbar-left">
+      <button id="back-btn" class="hidden">← Back</button>
+      <button id="home-btn" aria-label="Go home">🏠</button>
+    </div>
+    <div id="brand-link">Vera</div>
     <div id="clock"></div>
   </header>
 
@@ -55,11 +58,18 @@
           <span class="tile-icon">📅</span>
           <span class="tile-label">Progress</span>
         </button>
+        <button class="tile" data-intent="cheers">
+          <span class="tile-icon">💜</span>
+          <span class="tile-label">Cheers</span>
+          <span id="home-cheers-badge" class="tile-badge hidden"></span>
+        </button>
       </div>
-      <div id="family-shelf" class="hidden">
-        <h2 class="section-sub">Messages from Family 💜</h2>
-        <div id="family-shelf-list" class="family-shelf-list"></div>
-      </div>
+    </section>
+
+    <section id="screen-cheers" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-cheers" data-size="corner"></div>
+      <h1 class="screen-title">Cheers from Family</h1>
+      <div id="cheers-content"></div>
     </section>
 
     <section id="screen-games" class="screen hidden">
@@ -158,7 +168,7 @@
           <div id="meditation-text" class="say-text"></div>
           <div id="meditation-result" class="result-box hidden"></div>
           <div class="action-row">
-            <button id="meditation-stop-btn" class="secondary-btn">I'm Done</button>
+            <button id="meditation-stop-btn" class="secondary-btn">Stop</button>
             <button id="meditation-to-tv-btn" class="secondary-btn">📺 Send to Living Room</button>
           </div>
         </div>
@@ -170,13 +180,23 @@
       <h1 class="screen-title">My Progress</h1>
       <div id="progress-streak" class="big-text"></div>
       <div id="progress-week" class="say-text"></div>
+      <h2 class="section-sub">How You're Doing</h2>
+      <div id="progress-engagement" class="engagement-list"></div>
+      <h2 class="section-sub">Last 5 Weeks</h2>
+      <div id="progress-calendar-weekday-row" class="calendar-weekday-row"></div>
       <div id="progress-calendar" class="calendar-grid"></div>
       <h2 class="section-sub">Badges Earned</h2>
       <div id="progress-badges" class="badge-row"></div>
-      <h2 class="section-sub">How You're Doing</h2>
-      <div id="progress-engagement" class="engagement-list"></div>
       <a id="for-family-link" href="#" target="_blank" rel="noopener">👪 For Family: Record a Cheer</a>
     </section>
+
+    <div id="day-detail-overlay" class="hidden">
+      <div class="cheer-card-overlay">
+        <h2 id="day-detail-title"></h2>
+        <div id="day-detail-body"></div>
+        <button id="day-detail-close-btn" class="primary-btn">Close</button>
+      </div>
+    </div>
 
     <section id="screen-log-activity" class="screen hidden">
       <div class="vera-slot" id="vera-slot-log-activity" data-size="corner"></div>

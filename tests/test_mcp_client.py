@@ -142,6 +142,14 @@ def test_games_and_activities_flow(tmp_path):
             memory_trend = next(t for t in trends if t["game"] == "memory_game")
             assert "just getting started" in memory_trend["label"]
 
+            assert len(tried_all["calendar_weeks"]) == 5
+            assert all(len(row) == 7 for row in tried_all["calendar_weeks"])
+            assert {b["id"] for b in tried_all["badges_summary"]} == {m["id"] for m in tried_all["milestones"]}
+
+            today_detail = _data(await s.call_tool("get_day_detail", {}))
+            assert {a["type"] for a in today_detail["activities"]} >= {"memory_game", "walk"}
+            assert "first_session" in {b["id"] for b in today_detail["badges"]}
+
     asyncio.run(run())
 
 

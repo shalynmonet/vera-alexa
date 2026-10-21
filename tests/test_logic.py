@@ -168,3 +168,64 @@ def test_weekly_milestones_are_reearnable_next_week():
     user["activities"].append({"type": "walk", "date": next_week.isoformat(), "minutes": 70, "details": {}})
     new = progress.check_milestones(user, next_week)
     assert any(m["id"] == "active_60_week" for m in new)
+
+
+def test_calendar_weeks_returns_five_sunday_to_saturday_rows():
+    rows = progress.calendar_weeks([], T, weeks=5)
+    assert len(rows) == 5
+    assert all(len(row) == 7 for row in rows)
+    # T is Friday 2026-10-09; its week runs Sunday 2026-10-04 to Saturday 2026-10-10.
+    last_row = rows[-1]
+    assert last_row[0]["date"] == "2026-10-04"
+    assert last_row[-1]["date"] == "2026-10-10"
+
+
+def test_calendar_weeks_marks_today_active_days_and_future():
+    acts = [{"type": "stretch", "date": T.isoformat(), "minutes": 8, "details": {}}]
+    rows = progress.calendar_weeks(acts, T, weeks=5)
+    today_cell = next(c for row in rows for c in row if c["date"] == T.isoformat())
+    assert today_cell["is_today"] is True
+    assert today_cell["active"] is True
+    tomorrow_cell = next(c for row in rows for c in row if c["date"] == (T + timedelta(days=1)).isoformat())
+    assert tomorrow_cell["is_future"] is True
+    assert tomorrow_cell["active"] is False
+
+
+def test_badge_summary_dedupes_repeatable_badges_with_count():
+    milestones = [
+        {"id": "weekly_goal", "title": "Weekly Goal Met", "earned_on": "2026-09-20"},
+        {"id": "weekly_goal", "title": "Weekly Goal Met", "earned_on": "2026-09-27"},
+        {"id": "weekly_goal", "title": "Weekly Goal Met", "earned_on": "2026-10-04"},
+        {"id": "first_session", "title": "First Session", "earned_on": "2026-09-01"},
+    ]
+    summary = progress.badge_summary(milestones)
+    by_id = {b["id"]: b for b in summary}
+    assert len(summary) == 2
+    assert by_id["weekly_goal"]["count"] == 3
+    assert by_id["first_session"]["count"] == 1
+
+
+def test_day_detail_collects_activities_cheers_and_badges():
+    user = {
+        "activities": [
+            {"type": "walk", "date": T.isoformat(), "minutes": 20, "details": {"feeling": "happy"}},
+            {"type": "memory_game", "date": T.isoformat(), "minutes": 2, "details": {"score": 4, "total": 4}},
+            {"type": "walk", "date": (T - timedelta(days=1)).isoformat(), "minutes": 15, "details": {}},
+        ],
+        "milestones": [{"id": "first_walk", "title": "First Walk", "earned_on": T.isoformat()}],
+        "cheers": [
+            {"id": "c1", "family_name": "Jake", "played_on": T.isoformat()},
+            {"id": "c2", "family_name": "Jake", "played_on": (T - timedelta(days=2)).isoformat()},
+        ],
+    }
+    detail = progress.day_detail(user, T)
+    assert detail["date"] == T.isoformat()
+    assert {a["type"] for a in detail["activities"]} == {"walk", "memory_game"}
+    assert [c["id"] for c in detail["cheers_played"]] == ["c1"]
+    assert [b["id"] for b in detail["badges"]] == ["first_walk"]
+
+
+def test_day_detail_empty_day_returns_empty_lists():
+    user = {"activities": [], "milestones": [], "cheers": []}
+    detail = progress.day_detail(user, T)
+    assert detail == {"date": T.isoformat(), "activities": [], "cheers_played": [], "badges": []}
