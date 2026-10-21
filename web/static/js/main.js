@@ -3,7 +3,8 @@ import { listen, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
 
-const SCREENS = ["start", "home", "games", "memory", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity"];
+const SCREENS = ["start", "home", "games", "memory", "matching", "saying", "category", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity"];
+const GAME_ICONS = { memory_game: "🧠", matching_game: "🃏", saying_game: "📜", category_game: "🗂️" };
 const ENCOURAGEMENTS = [
   "You're doing wonderfully. Keep it up!",
   "Nice and steady, just how we like it.",
@@ -188,10 +189,13 @@ async function routeUtterance(text) {
   const intent = parseIntent(text);
   if (intent === "home") { showScreen("home"); return; }
   if (intent === "memory") { showScreen("memory"); startMemoryGame(); return; }
+  if (intent === "matching") { showScreen("matching"); startMatchingGame(); return; }
+  if (intent === "saying") { showScreen("saying"); startSayingGame(); return; }
+  if (intent === "category") { showScreen("category"); startCategoryGame(); return; }
   if (intent === "stretch") { showScreen("stretch"); startStretch(); return; }
   if (intent === "meditation") { showScreen("meditation"); return; }
   if (intent === "progress") { showScreen("progress"); return; }
-  await say(`I heard "${text}". Try saying memory game, chair stretch, meditation, or my progress.`);
+  await say(`I heard "${text}". Try saying memory game, matching pairs, finish the saying, word categories, chair stretch, meditation, or my progress.`);
 }
 
 // Dispatch tool calls Bedrock made during a chat turn to the matching
@@ -207,6 +211,26 @@ async function handleBedrockToolCalls(toolCalls) {
       case "submit_memory_answer":
         if (current !== "memory") showScreen("memory");
         await renderMemoryResult(call.result);
+        break;
+      case "start_matching_game":
+        showScreen("matching");
+        await startMatchingGame(call.result);
+        break;
+      case "start_saying_game":
+        showScreen("saying");
+        await renderSayingQuestion(call.result);
+        break;
+      case "submit_saying_answer":
+        if (current !== "saying") showScreen("saying");
+        await renderSayingResult(call.result);
+        break;
+      case "start_category_game":
+        showScreen("category");
+        startCategoryRound(call.result);
+        break;
+      case "submit_category_answer":
+        if (current !== "category") showScreen("category");
+        await renderCategoryResult(call.result);
         break;
       case "start_stretch_routine":
         showScreen("stretch");
@@ -243,6 +267,9 @@ function parseIntent(text) {
   const t = text.toLowerCase();
   if (/\b(home|main menu|go back)\b/.test(t)) return "home";
   if (/\b(memory|word game|remember)\b/.test(t)) return "memory";
+  if (/\b(matching|match the|flip cards|pairs)\b/.test(t)) return "matching";
+  if (/\b(saying|proverb|finish the)\b/.test(t)) return "saying";
+  if (/\b(categor)\b/.test(t)) return "category";
   if (/\b(stretch|chair|exercise)\b/.test(t)) return "stretch";
   if (/\b(medit|calm|breath|relax)\b/.test(t)) return "meditation";
   if (/\b(progress|calendar|streak|badge|how am i doing)\b/.test(t)) return "progress";
@@ -301,17 +328,37 @@ async function renderGamesList() {
   }
   list.innerHTML = data.games.map((g) => `
     <button class="tile" data-game-id="${escapeHtml(g.id)}">
-      <span class="tile-icon">🧠</span>
+      <span class="tile-icon">${GAME_ICONS[g.id] || "🎲"}</span>
       <span class="tile-label">${escapeHtml(g.title)}</span>
       <span class="tile-desc">${escapeHtml(g.description || "")}</span>
     </button>
   `).join("");
   list.querySelectorAll(".tile[data-game-id]").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", () => openGame(btn.dataset.gameId));
+  });
+}
+
+function openGame(gameId) {
+  switch (gameId) {
+    case "memory_game":
       showScreen("memory");
       startMemoryGame();
-    });
-  });
+      break;
+    case "matching_game":
+      showScreen("matching");
+      startMatchingGame();
+      break;
+    case "saying_game":
+      showScreen("saying");
+      startSayingGame();
+      break;
+    case "category_game":
+      showScreen("category");
+      startCategoryGame();
+      break;
+    default:
+      break;
+  }
 }
 
 // ---------- memory game ----------
@@ -363,6 +410,199 @@ async function submitMemoryAnswer(answer) {
     return;
   }
   await renderMemoryResult(result);
+}
+
+// ---------- matching pairs ----------
+
+let matchingState = { cards: [], flipped: [], matched: [], attempts: 0, busy: false };
+
+async function startMatchingGame(preloaded) {
+  el("matching-result").classList.add("hidden");
+  el("matching-again-btn").classList.add("hidden");
+  el("matching-prompt").textContent = "Get ready…";
+  el("matching-board").innerHTML = "";
+  let data = preloaded;
+  if (!data) {
+    try {
+      data = await callTool("start_matching_game", { user_id: currentUserId });
+    } catch {
+      el("matching-prompt").textContent = "Couldn't start the game. Is the Vera server running?";
+      return;
+    }
+  }
+  matchingState = { cards: data.cards, flipped: [], matched: [], attempts: 0, busy: false };
+  renderMatchingBoard();
+  el("matching-prompt").textContent = `Find the ${data.pairs} matching pairs.`;
+  await say(data.say);
+}
+
+function renderMatchingBoard() {
+  const board = el("matching-board");
+  board.innerHTML = matchingState.cards.map((symbol, i) => {
+    const isMatched = matchingState.matched.includes(i);
+    const isFlipped = matchingState.flipped.includes(i) || isMatched;
+    return `<button class="match-card${isFlipped ? " flipped" : ""}${isMatched ? " matched" : ""}" data-index="${i}" ${isMatched ? "disabled" : ""}>
+      ${isFlipped ? escapeHtml(symbol) : "❓"}
+    </button>`;
+  }).join("");
+  board.querySelectorAll(".match-card:not(.matched)").forEach((btn) => {
+    btn.addEventListener("click", () => flipMatchingCard(Number(btn.dataset.index)));
+  });
+}
+
+async function flipMatchingCard(index) {
+  if (current !== "matching" || matchingState.busy) return;
+  if (matchingState.flipped.includes(index) || matchingState.matched.includes(index)) return;
+  matchingState.flipped.push(index);
+  renderMatchingBoard();
+  if (matchingState.flipped.length < 2) return;
+
+  matchingState.busy = true;
+  matchingState.attempts += 1;
+  const [a, b] = matchingState.flipped;
+  await sleep(700);
+  if (matchingState.cards[a] === matchingState.cards[b]) {
+    matchingState.matched.push(a, b);
+  }
+  matchingState.flipped = [];
+  matchingState.busy = false;
+  renderMatchingBoard();
+
+  if (matchingState.matched.length === matchingState.cards.length) {
+    await finishMatchingGame();
+  }
+}
+
+async function finishMatchingGame() {
+  el("matching-prompt").textContent = "";
+  let result;
+  try {
+    result = await callTool("submit_matching_result", { attempts: matchingState.attempts, user_id: currentUserId });
+  } catch {
+    return;
+  }
+  el("matching-result").textContent = `Found all ${result.pairs} pairs in ${matchingState.attempts} tries!`;
+  el("matching-result").classList.remove("hidden");
+  el("matching-again-btn").classList.remove("hidden");
+  await say(result.say);
+  await celebrate(result.new_milestones);
+}
+
+// ---------- finish the saying ----------
+
+async function startSayingGame(preloaded) {
+  el("saying-result").classList.add("hidden");
+  el("saying-again-btn").classList.add("hidden");
+  el("saying-prompt").textContent = "Get ready…";
+  el("saying-choices").innerHTML = "";
+  el("saying-progress").textContent = "";
+  let data = preloaded;
+  if (!data) {
+    try {
+      data = await callTool("start_saying_game", { user_id: currentUserId });
+    } catch {
+      el("saying-prompt").textContent = "Couldn't start the game. Is the Vera server running?";
+      return;
+    }
+  }
+  await renderSayingQuestion(data);
+}
+
+async function renderSayingQuestion(data) {
+  el("saying-progress").textContent = `Question ${data.question_number} of ${data.total}`;
+  el("saying-prompt").textContent = `"${data.beginning} ___"`;
+  el("saying-choices").innerHTML = data.choices.map((c) => `
+    <button class="tile" data-choice="${escapeHtml(c)}"><span class="tile-label">${escapeHtml(c)}</span></button>
+  `).join("");
+  el("saying-choices").querySelectorAll(".tile[data-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => submitSayingAnswer(btn.dataset.choice));
+  });
+  pendingAnswer = submitSayingAnswer;
+  await say(data.say);
+}
+
+async function submitSayingAnswer(choice) {
+  pendingAnswer = null;
+  el("saying-choices").innerHTML = "";
+  let result;
+  try {
+    result = await callTool("submit_saying_answer", { choice, user_id: currentUserId });
+  } catch {
+    el("saying-prompt").textContent = "Something went wrong. Let's try again.";
+    return;
+  }
+  await renderSayingResult(result);
+}
+
+async function renderSayingResult(result) {
+  if (!result.done) {
+    const feedback = result.correct ? "That's right!" : `Not quite — it's "${result.answer}."`;
+    el("saying-progress").textContent = feedback;
+    await say(feedback);
+    if (current !== "saying") return;
+    await renderSayingQuestion(result);
+    return;
+  }
+  el("saying-prompt").textContent = "";
+  el("saying-progress").textContent = "";
+  el("saying-result").textContent = `You got ${result.score} of ${result.total} right!`;
+  el("saying-result").classList.remove("hidden");
+  el("saying-again-btn").classList.remove("hidden");
+  await say(result.say);
+  await celebrate(result.new_milestones);
+}
+
+// ---------- word categories ----------
+
+async function startCategoryGame(preloaded) {
+  el("category-result").classList.add("hidden");
+  el("category-again-btn").classList.add("hidden");
+  el("category-answer-row").classList.add("hidden");
+  el("category-prompt").textContent = "Get ready…";
+  let data = preloaded;
+  if (!data) {
+    try {
+      data = await callTool("start_category_game", { user_id: currentUserId });
+    } catch {
+      el("category-prompt").textContent = "Couldn't start the game. Is the Vera server running?";
+      return;
+    }
+  }
+  await startCategoryRound(data);
+}
+
+async function startCategoryRound(data) {
+  el("category-prompt").textContent = `Name as many ${data.category} as you can.`;
+  await say(data.say);
+  if (current !== "category") return;
+  el("category-answer-row").classList.remove("hidden");
+  pendingAnswer = submitCategoryAnswer;
+}
+
+async function submitCategoryAnswer(answer) {
+  pendingAnswer = null;
+  el("category-answer-row").classList.add("hidden");
+  el("category-prompt").textContent = "Let's see…";
+  let result;
+  try {
+    result = await callTool("submit_category_answer", { answer, user_id: currentUserId });
+  } catch {
+    el("category-prompt").textContent = "Something went wrong. Let's try again.";
+    return;
+  }
+  await renderCategoryResult(result);
+}
+
+async function renderCategoryResult(result) {
+  el("category-answer-row").classList.add("hidden");
+  el("category-prompt").textContent = "";
+  el("category-result").textContent = result.found.length
+    ? `You named: ${result.found.join(", ")}.`
+    : "No matches that time — let's try again!";
+  el("category-result").classList.remove("hidden");
+  el("category-again-btn").classList.remove("hidden");
+  await say(result.say);
+  await celebrate(result.new_milestones);
 }
 
 // ---------- exercise ----------
@@ -853,6 +1093,11 @@ function init() {
 
   el("memory-listen-btn").addEventListener("click", captureSpeech);
   el("memory-again-btn").addEventListener("click", () => startMemoryGame());
+
+  el("matching-again-btn").addEventListener("click", () => startMatchingGame());
+  el("saying-again-btn").addEventListener("click", () => startSayingGame());
+  el("category-listen-btn").addEventListener("click", captureSpeech);
+  el("category-again-btn").addEventListener("click", () => startCategoryGame());
 
   el("stretch-pause-btn").addEventListener("click", toggleStretchPause);
   el("stretch-next-btn").addEventListener("click", () => {

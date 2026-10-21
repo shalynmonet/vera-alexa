@@ -65,7 +65,9 @@ def test_full_flow(tmp_path):
                     assert "Rose completed 2 activities today" in summ["summary"]
 
                     sessions = _data(await s.call_tool("list_sessions", {}))
-                    assert {g["id"] for g in sessions["games"]} == {"memory_game"}
+                    assert {g["id"] for g in sessions["games"]} == {
+                        "memory_game", "matching_game", "saying_game", "category_game",
+                    }
 
                     profiles = _data(await s.call_tool("list_profiles", {}))
                     assert {"user_id": "demo", "name": "Rose"} in profiles["profiles"]
@@ -88,6 +90,30 @@ def test_full_flow(tmp_path):
 
                     custom = _data(await s.call_tool("log_activity", {"activity": "Evening Yoga!", "minutes": 15}))
                     assert custom["activity"] == "evening_yoga"
+
+                    match = _data(await s.call_tool("start_matching_game", {"difficulty": 3}))
+                    assert len(match["cards"]) == 6
+                    match_res = _data(await s.call_tool("submit_matching_result", {"attempts": 3}))
+                    assert match_res["perfect"]
+
+                    saying = _data(await s.call_tool("start_saying_game", {"difficulty": 3}))
+                    assert saying["total"] == 3
+                    # The correct ending is kept server-side, so just answer with
+                    # whatever's offered and walk the round to completion.
+                    saying_res = _data(await s.call_tool("submit_saying_answer", {"choice": saying["choices"][0]}))
+                    while not saying_res["done"]:
+                        saying_res = _data(await s.call_tool("submit_saying_answer", {"choice": saying_res["choices"][0]}))
+                    assert saying_res["total"] == 3
+
+                    category = _data(await s.call_tool("start_category_game", {"difficulty": 3}))
+                    items = {"fruits": "apple banana orange", "animals": "dog cat horse",
+                             "colors": "red blue green", "furniture": "chair table sofa",
+                             "vegetables": "carrot potato tomato"}[category["category"]]
+                    category_res = _data(await s.call_tool("submit_category_answer", {"answer": items}))
+                    assert category_res["count"] == 3
+
+                    tried_all = _data(await s.call_tool("get_fitness_log", {}))
+                    assert "tried_every_game" in {m["id"] for m in tried_all["milestones"]}
 
         asyncio.run(run())
     finally:

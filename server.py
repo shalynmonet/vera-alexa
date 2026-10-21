@@ -13,7 +13,7 @@ from datetime import date
 
 from mcp.server.fastmcp import FastMCP
 
-from vera import media, memory_game, progress
+from vera import matching_game, media, memory_game, progress, saying_game, word_categories
 from vera.content import GAMES
 from vera.storage import Store
 
@@ -24,10 +24,11 @@ mcp = FastMCP(
     "Vera",
     instructions=(
         "Vera is a warm wellness companion for older adults. Speak slowly, kindly, "
-        "and in short sentences. Never shame missed days. Offer games, exercise "
-        "routines, or meditations -- call list_sessions to see what's available. "
-        "After a completed guided session, call log_completion; for anything else "
-        "the person did on their own (a walk, a bike ride, gardening, dancing, "
+        "and in short sentences. Never shame missed days. Offer games (memory, "
+        "matching pairs, finish the saying, word categories), exercise routines, "
+        "or meditations -- call list_sessions to see what's available. After a "
+        "completed guided session, call log_completion; for anything else the "
+        "person did on their own (a walk, a bike ride, gardening, dancing, "
         "swimming, or any other activity), call log_activity instead. Celebrate "
         "any new milestones a tool call returns."
     ),
@@ -126,6 +127,146 @@ def submit_memory_answer(answer: str, user_id: str = "demo", on_date: str | None
     new = _log(u, "memory_game", 2, _today(on_date), {"score": result["score"], "total": result["total"], "perfect": result["perfect"]})
     store.save_user(u)
     return {**result, "next_difficulty": nxt, "say": memory_game.encouragement(result), "new_milestones": new}
+
+
+# ---------- Matching pairs ----------
+
+@mcp.tool()
+def start_matching_game(user_id: str = "demo", difficulty: int | None = None) -> dict:
+    """Start a matching pairs round: flip cards to find the matching
+    pictures. difficulty is the number of pairs (3 to 6, meaning 6 to 12
+    cards); if omitted, Vera uses the level from the person's last round."""
+    u = store.get_user(user_id)
+    level = difficulty or (u.get("matching") or {}).get("next_difficulty") or 3
+    cards = matching_game.deal(level)
+    pairs = len(cards) // 2
+    u["matching"] = {"pairs": pairs}
+    store.save_user(u)
+    return {
+        "pairs": pairs,
+        "cards": cards,
+        "say": f"Let's play a matching game, {u['name']}. Find the {pairs} pairs of pictures. Take your time.",
+    }
+
+
+@mcp.tool()
+def submit_matching_result(attempts: int, user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Record a finished matching pairs round. attempts is how many times a
+    pair of cards was flipped in total (the pairs count is from the last
+    start_matching_game call). Adapts difficulty and logs the game."""
+    u = store.get_user(user_id)
+    state = u.get("matching") or {"pairs": matching_game.MIN_PAIRS}
+    pairs = state["pairs"]
+    nxt = matching_game.next_difficulty(pairs, attempts, pairs)
+    u["matching"] = {"pairs": pairs, "next_difficulty": nxt}
+    perfect = attempts <= pairs
+    new = _log(u, "matching_game", 3, _today(on_date), {"pairs": pairs, "attempts": attempts, "perfect": perfect})
+    store.save_user(u)
+    say = "Every pair found with no wasted flips. Sharp eyes today!" if perfect else f"Well done, you found all {pairs} pairs!"
+    return {"pairs": pairs, "attempts": attempts, "perfect": perfect, "next_difficulty": nxt, "say": say, "new_milestones": new}
+
+
+# ---------- Finish the saying ----------
+
+@mcp.tool()
+def start_saying_game(user_id: str = "demo", difficulty: int | None = None) -> dict:
+    """Start a 'Finish the Saying' round: classic sayings, multiple choice.
+    difficulty is how many sayings are in the round (3 to 6); if omitted,
+    Vera uses the level from the person's last round."""
+    u = store.get_user(user_id)
+    level = difficulty or (u.get("saying") or {}).get("next_difficulty") or 3
+    items = saying_game.new_round(level)
+    u["saying"] = {"items": items, "index": 0, "score": 0, "total": len(items)}
+    store.save_user(u)
+    return _saying_question(u)
+
+
+def _saying_question(u: dict) -> dict:
+    state = u["saying"]
+    item = state["items"][state["index"]]
+    choices = saying_game.choices_for(item)
+    return {
+        "question_number": state["index"] + 1,
+        "total": state["total"],
+        "beginning": item["beginning"],
+        "choices": choices,
+        "done": False,
+        "say": f"Finish the saying: {item['beginning']}...?",
+    }
+
+
+@mcp.tool()
+def submit_saying_answer(choice: str, user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Submit the chosen ending for the current 'Finish the Saying'
+    question. Returns whether it was correct, and either the next question
+    or, if the round is complete, the final score with any new milestones."""
+    u = store.get_user(user_id)
+    state = u.get("saying")
+    if not state or state.get("index") is None:
+        return {"error": "No saying round in progress. Call start_saying_game first."}
+    item = state["items"][state["index"]]
+    correct = saying_game.is_correct(choice, item["correct"])
+    if correct:
+        state["score"] += 1
+    state["index"] += 1
+    if state["index"] < state["total"]:
+        store.save_user(u)
+        return {"correct": correct, "answer": item["correct"], **_saying_question(u)}
+
+    score, total = state["score"], state["total"]
+    perfect = score == total
+    nxt = saying_game.next_difficulty(total, score, total)
+    u["saying"] = {"next_difficulty": nxt}
+    new = _log(u, "saying_game", 2, _today(on_date), {"score": score, "total": total, "perfect": perfect})
+    store.save_user(u)
+    say = f"All {total} correct! Your memory for sayings is sharp." if perfect else f"You got {score} of {total}. Nice work."
+    return {
+        "correct": correct, "answer": item["correct"], "done": True,
+        "score": score, "total": total, "perfect": perfect,
+        "next_difficulty": nxt, "say": say, "new_milestones": new,
+    }
+
+
+# ---------- Word categories ----------
+
+@mcp.tool()
+def start_category_game(user_id: str = "demo", difficulty: int | None = None) -> dict:
+    """Start a word categories round: name as many things as you can in a
+    category (like fruits or animals). difficulty is the target number of
+    items to aim for (3 to 8); if omitted, Vera uses the level from the
+    person's last round."""
+    u = store.get_user(user_id)
+    level = difficulty or (u.get("category") or {}).get("next_difficulty") or 4
+    level = max(word_categories.MIN_TARGET, min(word_categories.MAX_TARGET, level))
+    category = word_categories.random_category()
+    u["category"] = {"name": category, "target": level}
+    store.save_user(u)
+    return {
+        "category": category,
+        "target": level,
+        "say": f"Let's name some things, {u['name']}. Can you name {level} {category}? Tell me when you're ready.",
+    }
+
+
+@mcp.tool()
+def submit_category_answer(answer: str, user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Score a free-form list of items named for the current word category
+    round (forgiving of extra words, order, and small mishearings). Adapts
+    difficulty and logs the game."""
+    u = store.get_user(user_id)
+    state = u.get("category")
+    if not state:
+        return {"error": "No category round in progress. Call start_category_game first."}
+    category, target = state["name"], state["target"]
+    result = word_categories.score_answer(category, answer)
+    count = result["count"]
+    perfect = count >= target
+    nxt = word_categories.next_difficulty(target, count, target)
+    u["category"] = {"next_difficulty": nxt}
+    new = _log(u, "category_game", 2, _today(on_date), {"category": category, "found": result["found"], "count": count, "target": target})
+    store.save_user(u)
+    say = f"Wonderful! You named {count} {category}." if perfect else f"You named {count} {category}. The target was {target} -- nice try!"
+    return {**result, "category": category, "target": target, "perfect": perfect, "next_difficulty": nxt, "say": say, "new_milestones": new}
 
 
 # ---------- Guided sessions ----------

@@ -100,6 +100,26 @@ def test_active_100_lifetime_minutes_milestone():
     assert "active_100_lifetime" in ids
 
 
+def test_tried_every_game_milestone():
+    activities = [
+        {"type": t, "date": T.isoformat(), "minutes": 2, "details": {}}
+        for t in ["memory_game", "matching_game", "saying_game", "category_game"]
+    ]
+    user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}
+    ids = {m["id"] for m in progress.check_milestones(user, T)}
+    assert "tried_every_game" in ids
+
+
+def test_tried_every_game_not_awarded_until_all_four():
+    activities = [
+        {"type": t, "date": T.isoformat(), "minutes": 2, "details": {}}
+        for t in ["memory_game", "matching_game", "saying_game"]
+    ]
+    user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}
+    ids = {m["id"] for m in progress.check_milestones(user, T)}
+    assert "tried_every_game" not in ids
+
+
 def test_weekly_milestones_are_reearnable_next_week():
     activities = [{"type": "walk", "date": T.isoformat(), "minutes": 70, "details": {}}]
     user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}

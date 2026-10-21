@@ -77,10 +77,14 @@ MILESTONES = [
     ("first_ride", "First Ride", "Your first ride, logged. Keep on pedaling."),
     ("active_60_week", "60 Active Minutes This Week", "Sixty minutes of activity this week. Wonderful."),
     ("active_100_lifetime", "100 Active Minutes", "A hundred minutes of activity. That really adds up."),
+    ("tried_every_game", "Tried Every Game", "You've tried every game Vera has. What a sport!"),
 ]
 
 # Milestones re-earnable each new week (tracked per-week, not just once).
 WEEKLY_MILESTONES = {"weekly_goal", "active_60_week"}
+
+# Every game Vera currently offers, for the "tried every game" milestone.
+GAME_TYPES = {"memory_game", "matching_game", "saying_game", "category_game"}
 
 
 def _earned(mid: str, counts: Counter, streak: dict, week: dict, any_perfect: bool, lifetime_minutes: float) -> bool:
@@ -98,6 +102,7 @@ def _earned(mid: str, counts: Counter, streak: dict, week: dict, any_perfect: bo
         "first_ride": counts.get("bike", 0) + counts.get("stationary_bike", 0) >= 1,
         "active_60_week": week["active_minutes"] >= 60,
         "active_100_lifetime": lifetime_minutes >= 100,
+        "tried_every_game": all(counts.get(g, 0) >= 1 for g in GAME_TYPES),
     }[mid]
 
 

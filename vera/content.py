@@ -10,6 +10,18 @@ GAMES = {
         "title": "Memory Game",
         "description": "Listen to a short list of words, then say back as many as you can remember.",
     },
+    "matching_game": {
+        "title": "Matching Pairs",
+        "description": "Flip cards to find the matching pictures.",
+    },
+    "saying_game": {
+        "title": "Finish the Saying",
+        "description": "Classic sayings, multiple choice.",
+    },
+    "category_game": {
+        "title": "Word Categories",
+        "description": "Name as many things as you can in a category.",
+    },
 }
 
 # Familiar, easy-to-picture words for the memory game.
