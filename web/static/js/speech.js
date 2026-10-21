@@ -18,11 +18,20 @@ function ensureVoices() {
   return voicesPromise;
 }
 
+// The Web Speech API exposes no standard gender field, so this is a name
+// heuristic covering common female voices across Windows, macOS/iOS, and
+// Chrome/Android voice packs -- used only for the browser-speech fallback
+// (Amazon Polly, Vera's primary voice, is explicitly set to Ruth).
+const FEMALE_NAME_HINTS = /\bfemale\b|zira|jenny|aria(?!l)|samantha|victoria|karen|moira|tessa|fiona|ava|allison|susan|kathy|serena|salli|joanna|kendra|kimberly|ruth|ivy|danielle|hazel|libby|sonia|emma|olivia|amy|eva|michelle|princess/i;
+const MALE_NAME_HINTS = /\bmale\b|matthew|david|mark|james|daniel|george|ryan|guy(?!ana)|justin|joey|kevin|stephen|brian|eric/i;
+
 function pickVoice(voices) {
+  const en = voices.filter((v) => v.lang?.toLowerCase().startsWith("en"));
+  const pool = en.length ? en : voices;
   return (
-    voices.find((v) => v.lang?.startsWith("en") && /aria|jenny|samantha|female/i.test(v.name)) ||
-    voices.find((v) => v.lang?.startsWith("en-US")) ||
-    voices.find((v) => v.lang?.startsWith("en")) ||
+    pool.find((v) => FEMALE_NAME_HINTS.test(v.name) && !MALE_NAME_HINTS.test(v.name)) ||
+    pool.find((v) => v.lang?.startsWith("en-US")) ||
+    pool[0] ||
     voices[0]
   );
 }

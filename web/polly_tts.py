@@ -18,7 +18,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
-VOICE_ID = os.environ.get("VERA_POLLY_VOICE", "Joanna")
+VOICE_ID = os.environ.get("VERA_POLLY_VOICE", "Ruth")  # warm, mature neural voice; try "Joanna" or "Danielle" too
 ENGINE = os.environ.get("VERA_POLLY_ENGINE", "neural")
 RATE = os.environ.get("VERA_POLLY_RATE", "92%")  # slightly slower, for older ears
 
