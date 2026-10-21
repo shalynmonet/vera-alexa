@@ -338,3 +338,60 @@ def test_family_cheers_flow(tmp_path):
             assert family_after["family"] == []
 
     asyncio.run(run())
+
+
+def test_cheer_goal_counter_is_per_family_member(tmp_path):
+    """Regression test: the "X of 5 sent" goal returned by add_cheer must
+    count only that family member's own cheers. It used to count every
+    cheer the user had (len(u["cheers"])), so a brand new family member's
+    very first cheer inherited the count of whatever "seeded"/other-member
+    cheers already existed -- e.g. reporting "5 of 5" after just one."""
+    async def run():
+        async with _server_session(tmp_path) as s:
+            await s.call_tool("set_profile", {"name": "Rose"})
+
+            # Stand in for a seeded demo family member who already has
+            # several cheers recorded, same as seed_demo.py's "Jake".
+            jake = _data(await s.call_tool("add_family_member", {
+                "name": "Jake", "phone": "+15551234567",
+            }))["member"]
+            for i in range(4):
+                await s.call_tool("add_cheer", {
+                    "family_id": jake["id"], "media_type": "audio", "file": f"jake{i}.webm",
+                    "duration_seconds": 5, "cheer_type": "anytime",
+                })
+            jake_count = _data(await s.call_tool("add_cheer", {
+                "family_id": jake["id"], "media_type": "audio", "file": "jake4.webm",
+                "duration_seconds": 5, "cheer_type": "anytime",
+            }))
+            assert jake_count["sent_count"] == 5
+            assert jake_count["goal"] == 5
+
+            # A brand new family member added afterward: their first cheer
+            # must read "1 of 5", unaffected by Jake's 5 existing cheers.
+            maya = _data(await s.call_tool("add_family_member", {
+                "name": "Maya", "phone": "+15559876543",
+            }))["member"]
+            maya_first = _data(await s.call_tool("add_cheer", {
+                "family_id": maya["id"], "media_type": "audio", "file": "maya0.webm",
+                "duration_seconds": 5, "cheer_type": "anytime",
+            }))
+            assert maya_first["sent_count"] == 1
+            assert maya_first["goal"] == 5
+
+            # The two members' counts stay separate from each other.
+            maya_second = _data(await s.call_tool("add_cheer", {
+                "family_id": maya["id"], "media_type": "audio", "file": "maya1.webm",
+                "duration_seconds": 5, "cheer_type": "anytime",
+            }))
+            assert maya_second["sent_count"] == 2
+            jake_unchanged = _data(await s.call_tool("list_cheers", {"family_id": jake["id"]}))["cheers"]
+            assert len(jake_unchanged) == 5
+
+            # The page-load count (what the cheer-record page shows before
+            # recording anything) agrees with add_cheer's own count, and is
+            # also scoped per member rather than to the user's total.
+            maya_sent = _data(await s.call_tool("list_cheers", {"family_id": maya["id"]}))["cheers"]
+            assert len(maya_sent) == 2
+
+    asyncio.run(run())

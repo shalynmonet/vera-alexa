@@ -861,7 +861,12 @@ def add_cheer(family_id: str, media_type: str, file: str, duration_seconds: floa
     store.save_user(u)
     cheer["url"] = family.cheer_media_url(cheer)
     cheer["photo_url"] = family.cheer_photo_url(cheer)
-    return {"cheer": cheer, "sent_count": len(u["cheers"]), "goal": family.CHEER_GOAL}
+    # The "X of 5 sent" goal is per family member, not a total across
+    # everyone who's ever recorded a cheer for this person -- a brand new
+    # family member's first cheer must read "1 of 5", not however many
+    # cheers other family members (or seeded demo data) happen to have.
+    sent_count = sum(1 for c in u["cheers"] if c["family_id"] == family_id)
+    return {"cheer": cheer, "sent_count": sent_count, "goal": family.CHEER_GOAL}
 
 
 @mcp.tool()
