@@ -13,10 +13,11 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import mcp_bridge
+from . import mcp_bridge, polly_tts
 
 try:
     from . import bedrock_chat
@@ -56,6 +57,22 @@ async def api_chat(payload: dict):
         return JSONResponse(status_code=502, content={"error": str(e)})
     return result
 
+
+@app.post("/api/speak")
+async def api_speak(payload: dict):
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    try:
+        filename = await run_in_threadpool(polly_tts.synthesize, text)
+    except polly_tts.TTSError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"url": f"/audio-cache/{filename}"}
+
+
+# Mounted before the catch-all "/" static mount below so cached audio is
+# reachable at /audio-cache/<hash>.mp3.
+app.mount("/audio-cache", StaticFiles(directory=str(polly_tts.CACHE_DIR)), name="audio_cache")
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

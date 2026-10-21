@@ -32,7 +32,6 @@ const SECTION_POSE = {
 
 let root, img, bubble;
 let baseScreen = "home";
-let talkTimer = null;
 
 function init() {
   root = document.getElementById("vera-companion");
@@ -84,22 +83,17 @@ function showBubble(text) {
   bubble.classList.remove("hidden");
 }
 
-function startTalking() {
-  root.classList.add("talking");
-  let open = true;
-  renderStage("talking");
-  clearInterval(talkTimer);
-  talkTimer = setInterval(() => {
-    open = !open;
-    renderStage(open ? "talking" : "talking-closed");
-  }, 220);
+// Mouth state while talking is driven from outside (real playback volume
+// via Amazon Polly + a Web Audio analyser, or a timed approximation for the
+// browser-speech fallback) -- see web/static/js/voice.js. This module just
+// renders whichever frame it's told.
+function setTalkingVisual(on) {
+  root.classList.toggle("talking", !!on);
+  if (!on) setPose(basePose());
 }
 
-function stopTalking() {
-  clearInterval(talkTimer);
-  talkTimer = null;
-  root.classList.remove("talking");
-  setPose(basePose());
+function setMouthFrame(open) {
+  renderStage(open ? "talking" : "talking-closed");
 }
 
 function setListening(on) {
@@ -107,17 +101,18 @@ function setListening(on) {
   setPose(on ? "listening" : basePose());
 }
 
-// Speak through the caller's TTS function while the bubble shows the words
-// and the mouth animates. main.js owns the actual speechSynthesis call so
-// this module stays focused on the character, not audio plumbing.
+// Speak through the caller's voice function, which receives
+// {onMouthOpen, onMouthClosed} to drive the mouth frame while the bubble
+// shows the words. main.js/voice.js own the actual audio; this module stays
+// focused on the character.
 async function say(text, speakFn) {
   showBubble(text);
   if (!text) return;
-  startTalking();
+  setTalkingVisual(true);
   try {
-    await speakFn(text);
+    await speakFn({ onMouthOpen: () => setMouthFrame(true), onMouthClosed: () => setMouthFrame(false) });
   } finally {
-    stopTalking();
+    setTalkingVisual(false);
   }
 }
 
@@ -129,14 +124,10 @@ async function celebrate(text, speakFn) {
   root.classList.add("celebrate-pose");
   setPose("celebrating");
   showBubble(text);
-  startTalking();
-  try {
-    await speakFn(text);
-  } finally {
-    clearInterval(talkTimer);
-    talkTimer = null;
-    root.classList.remove("talking");
-  }
+  // No talking/talking-closed poses exist for the celebrate costume, so she
+  // just stays in the celebrating pose (the CSS bounce still gives it life)
+  // rather than flickering to a mismatched pose while speaking.
+  await speakFn({});
   placeInScreen(previousScreen);
 }
 

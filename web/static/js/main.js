@@ -1,5 +1,6 @@
 import { callTool, chat } from "./api.js";
-import { speak, listen, speechRecognitionSupported } from "./speech.js";
+import { listen, speechRecognitionSupported } from "./speech.js";
+import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
 
 const SCREENS = ["start", "home", "games", "memory", "exercise", "stretch", "meditation", "progress"];
@@ -70,7 +71,8 @@ function showScreen(name) {
 async function say(text) {
   if (!text) return;
   const mic = el("mic-btn");
-  await Companion.say(text, (t) => speak(t, {
+  await Companion.say(text, (callbacks) => speakText(text, {
+    ...callbacks,
     onStart: () => mic.classList.add("speaking"),
     onEnd: () => mic.classList.remove("speaking"),
   }));
@@ -80,11 +82,13 @@ async function celebrate(milestones) {
   if (!milestones || !milestones.length) return;
   const overlay = el("celebration");
   const titleEl = el("celebrate-title");
+  const mic = el("mic-btn");
   overlay.classList.remove("hidden");
   for (const m of milestones) {
     titleEl.textContent = m.title;
-    const mic = el("mic-btn");
-    await Companion.celebrate(m.celebration || `Congratulations, you earned ${m.title}!`, (t) => speak(t, {
+    const line = m.celebration || `Congratulations, you earned ${m.title}!`;
+    await Companion.celebrate(line, (callbacks) => speakText(line, {
+      ...callbacks,
       onStart: () => mic.classList.add("speaking"),
       onEnd: () => mic.classList.remove("speaking"),
     }));
@@ -427,7 +431,7 @@ async function startStretch(preloaded, routineId = "morning_chair_stretch") {
       await Promise.race([Promise.all([spoken, paced]), skipSignal]);
     }
     skipStretchStep = null;
-    speechSynthesis.cancel();
+    stopSpeaking();
   }
   Companion.setVideoMode(false);
   if (current !== "stretch") return;
@@ -473,10 +477,11 @@ let stretchPaused = false;
 function toggleStretchPause() {
   stretchPaused = !stretchPaused;
   el("stretch-pause-btn").textContent = stretchPaused ? "Resume" : "Pause";
-  // Coarse pause: speechSynthesis + the step loop both respect this between
-  // steps; mid-step pausing isn't needed for a hackathon demo.
-  if (stretchPaused) speechSynthesis.pause();
-  else speechSynthesis.resume();
+  // Coarse pause: whichever voice backend is talking, plus the step loop,
+  // both respect this between steps; mid-step pausing isn't needed for a
+  // hackathon demo.
+  if (stretchPaused) pauseSpeaking();
+  else resumeSpeaking();
 }
 
 // ---------- meditation ----------

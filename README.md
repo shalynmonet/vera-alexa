@@ -70,17 +70,30 @@ Includes an end to end test that starts the server and calls every core tool thr
 
 An Echo Show style Alexa+ simulator in the browser, matching the look of the
 [Vera Cares](https://vera-cares.lovable.app/) site: big text, high contrast,
-large buttons, voice in/out via the Web Speech API with a type-to-talk
-fallback, and a natural chat layer (AWS Bedrock, Amazon Nova Lite via the
-Converse API) that calls Vera's MCP tools through tool use. If Bedrock isn't
-reachable or configured, the simulator falls back to simple keyword routing
-so it keeps working.
+large buttons, and a natural chat layer (AWS Bedrock, Amazon Nova Lite via
+the Converse API) that calls Vera's MCP tools through tool use. If Bedrock
+isn't reachable or configured, the simulator falls back to simple keyword
+routing so it keeps working.
+
+Vera speaks with Amazon Polly: a warm neural voice, read slightly slower
+(SSML prosody) for older ears, generated once per line and cached on disk
+(`web/audio_cache/`, gitignored) so repeated lines are instant. Her mouth is
+lip-synced to the actual audio -- a Web Audio analyser watches playback
+volume and swaps `vera-talking.webp`/`vera-talking-closed.webp` in real
+time. If Polly isn't configured or a request fails, the browser's own
+SpeechSynthesis takes over automatically, with a timed mouth-flap
+approximation (that API exposes no audio to analyse). Voice *input* stays
+the browser's SpeechRecognition either way, with the type-to-talk fallback
+for when that isn't available.
 
 A start screen lets each person in the household pick their own profile
-("Continue as Rose" / "Add a person"), so progress is kept separately per
-person. From there, home has four sections -- Games, Exercise, Meditations,
-Progress -- each backed by its own MCP tool(s) so new games or routines show
-up automatically.
+("Continue as Rose" / "Add a person") -- like Alexa's voice profiles on a
+shared Echo -- so progress is kept separately per person. The choice is
+remembered per device (localStorage), so future visits skip straight to
+Home; tapping "Not you? Switch person" brings the picker back. From there,
+home has four sections -- Games, Exercise, Meditations, Progress -- each
+backed by its own MCP tool(s) so new games or routines show up
+automatically.
 
 Vera herself is a persistent on-screen companion (a purple elephant) built
 from `web/static/js/companion.js`: large and centered on the start/home
@@ -101,9 +114,10 @@ python -m web.app   # http://127.0.0.1:8080
 
 Configuration (env vars): `VERA_MCP_URL` (default `http://127.0.0.1:8000/mcp`),
 `WEB_HOST` / `WEB_PORT` (default `127.0.0.1:8080`), `VERA_BEDROCK_MODEL_ID`
-(default `us.amazon.nova-lite-v1:0`), `AWS_REGION` (default `us-east-1`).
-Needs AWS credentials (e.g. via `aws configure`) with `bedrock:InvokeModel`
-on that model.
+(default `us.amazon.nova-lite-v1:0`), `VERA_POLLY_VOICE` (default `Joanna`),
+`VERA_POLLY_ENGINE` (default `neural`), `VERA_POLLY_RATE` (default `92%`),
+`AWS_REGION` (default `us-east-1`). Needs AWS credentials (e.g. via
+`aws configure`) with `bedrock:InvokeModel` and `polly:SynthesizeSpeech`.
 
 ## Roadmap
 

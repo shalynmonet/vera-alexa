@@ -1,0 +1,106 @@
+// Fetches Vera's lines from the server (Amazon Polly, cached there) and
+// plays them back with a Web Audio analyser driving real mouth-open/closed
+// callbacks from the actual playback volume -- true lip sync, instead of a
+// fixed timer. Throws on any failure so voice.js can fall back to the
+// browser's own speech synthesis.
+
+let audioCtx = null;
+let currentAudio = null;
+
+export function pollySupported() {
+  return !!(window.AudioContext || window.webkitAudioContext);
+}
+
+function ensureContext() {
+  if (!audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new Ctx();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  return audioCtx;
+}
+
+export async function speakPolly(text, { onMouthOpen, onMouthClosed, onStart, onEnd } = {}) {
+  const res = await fetch("/api/speak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`Polly request failed (${res.status})`);
+  const { url } = await res.json();
+
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+
+  const ctx = ensureContext();
+  const audio = new Audio(url);
+  currentAudio = audio;
+
+  const source = ctx.createMediaElementSource(audio);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+  analyser.connect(ctx.destination);
+
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const MOUTH_OPEN_THRESHOLD = 12; // average byte amplitude (0-255)
+  let raf = null;
+  let open = false;
+
+  function sampleVolume() {
+    analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const avg = sum / data.length;
+    const shouldOpen = avg > MOUTH_OPEN_THRESHOLD;
+    if (shouldOpen !== open) {
+      open = shouldOpen;
+      (open ? onMouthOpen : onMouthClosed)?.();
+    }
+    raf = requestAnimationFrame(sampleVolume);
+  }
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = null;
+      if (currentAudio === audio) currentAudio = null;
+    };
+    audio.onplay = () => {
+      onStart?.();
+      sampleVolume();
+    };
+    audio.onended = () => {
+      cleanup();
+      onMouthClosed?.();
+      onEnd?.();
+      resolve();
+    };
+    audio.onerror = () => {
+      cleanup();
+      onEnd?.();
+      reject(new Error("Audio playback failed"));
+    };
+    audio.play().catch((e) => {
+      cleanup();
+      reject(e);
+    });
+  });
+}
+
+export function stopPolly() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+}
+
+export function pausePolly() {
+  currentAudio?.pause();
+}
+
+export function resumePolly() {
+  currentAudio?.play().catch(() => {});
+}
