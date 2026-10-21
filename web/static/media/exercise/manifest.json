@@ -1,0 +1,65 @@
+[
+  {
+    "id": "morning_chair_stretch",
+    "title": "Morning Chair Stretch",
+    "minutes": 8,
+    "file": "morning-chair-stretch.mp4",
+    "thumbnail": "morning-chair-stretch.jpg",
+    "steps": [
+      {"name": "Settle in", "seconds": 30, "say": "Sit tall near the front of your chair, feet flat on the floor. Let's take two slow breaths together."},
+      {"name": "Neck tilts", "seconds": 60, "say": "Gently tilt your ear toward your right shoulder. Hold. Now slowly to the left. Nice and easy."},
+      {"name": "Shoulder rolls", "seconds": 60, "say": "Roll your shoulders up, back, and down. Five times. Now the other direction."},
+      {"name": "Seated march", "seconds": 90, "say": "Lift one knee, then the other, like a slow march. Hold the sides of the chair if you like."},
+      {"name": "Check in", "seconds": 15, "say": "We're halfway there. How are your shoulders feeling?", "check_in": true},
+      {"name": "Ankle circles", "seconds": 60, "say": "Lift one foot a little and draw slow circles with your toes. Then switch feet."},
+      {"name": "Seated side reach", "seconds": 60, "say": "Raise your right arm and reach gently over to the left. Breathe. Now the other side."},
+      {"name": "Cool down", "seconds": 45, "say": "Rest your hands on your lap. Breathe in, and out. You did wonderful today."}
+    ]
+  },
+  {
+    "id": "seated_strength",
+    "title": "Seated Strength",
+    "minutes": 6,
+    "file": "seated-strength.mp4",
+    "thumbnail": "seated-strength.jpg",
+    "steps": [
+      {"name": "Settle in", "seconds": 30, "say": "Sit tall near the front of your chair, feet flat on the floor. Let's begin."},
+      {"name": "Seated leg lifts", "seconds": 60, "say": "Straighten one leg out in front of you, hold a moment, then lower it slowly. Now the other leg."},
+      {"name": "Arm presses", "seconds": 60, "say": "Press your palms together in front of your chest and push gently. Feel your arms working."},
+      {"name": "Check in", "seconds": 15, "say": "We're halfway there. How are you feeling?", "check_in": true},
+      {"name": "Sit to stand", "seconds": 60, "say": "If you're able, stand up slowly from your chair, then sit back down. Use the armrests for balance if you need to."},
+      {"name": "Shoulder presses", "seconds": 60, "say": "Raise both arms overhead, like you're reaching for the sky, then lower them slowly."},
+      {"name": "Cool down", "seconds": 45, "say": "Rest your hands in your lap. Take a deep breath in, and let it out. Well done today."}
+    ]
+  },
+  {
+    "id": "balance",
+    "title": "Balance",
+    "minutes": 5,
+    "file": "balance.mp4",
+    "thumbnail": "balance.jpg",
+    "steps": [
+      {"name": "Settle in", "seconds": 30, "say": "Stand behind your chair, holding on with both hands for support."},
+      {"name": "Weight shifts", "seconds": 60, "say": "Slowly shift your weight to your right foot, then to your left. Nice and steady."},
+      {"name": "Heel raises", "seconds": 60, "say": "Rise up onto your toes, then lower back down. Hold the chair if you need to."},
+      {"name": "Check in", "seconds": 15, "say": "How's your balance feeling so far?", "check_in": true},
+      {"name": "Single leg stand", "seconds": 60, "say": "Lift one foot just a little off the floor for a moment. Then switch sides."},
+      {"name": "Cool down", "seconds": 45, "say": "Sit back down and rest. You're building strength and confidence with every practice."}
+    ]
+  },
+  {
+    "id": "gentle_walking",
+    "title": "Gentle Walking",
+    "minutes": 9,
+    "file": "gentle-walking.mp4",
+    "thumbnail": "gentle-walking.jpg",
+    "steps": [
+      {"name": "Get ready", "seconds": 30, "say": "Find a clear path, indoors or out, and wear comfortable shoes."},
+      {"name": "Warm up", "seconds": 60, "say": "Start with a slow, easy pace. Let your arms swing naturally."},
+      {"name": "Steady pace", "seconds": 180, "say": "Keep a comfortable, steady pace. Breathe easily as you walk."},
+      {"name": "Check in", "seconds": 15, "say": "How are you doing? Keep going at whatever pace feels right.", "check_in": true},
+      {"name": "Steady pace", "seconds": 180, "say": "You're doing wonderfully. Keep that easy, steady pace."},
+      {"name": "Cool down", "seconds": 90, "say": "Slow your pace for this last stretch. Nice, easy steps."}
+    ]
+  }
+]

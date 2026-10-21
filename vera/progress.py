@@ -10,8 +10,6 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, timedelta
 
-ACTIVITY_TYPES = {"stretch", "meditation", "memory_game"}
-
 
 def active_days(activities: list[dict]) -> list[date]:
     return sorted({date.fromisoformat(a["date"]) for a in activities})
@@ -42,8 +40,15 @@ def streaks(activities: list[dict], today: date) -> dict:
 
 def week_summary(activities: list[dict], today: date, goal_days: int) -> dict:
     start = today - timedelta(days=today.weekday())  # Monday
-    days = {d for d in active_days(activities) if start <= d <= today}
-    return {"week_start": start.isoformat(), "active_days": len(days), "goal_days": goal_days, "goal_met": len(days) >= goal_days}
+    in_week = [a for a in activities if start <= date.fromisoformat(a["date"]) <= today]
+    days = {date.fromisoformat(a["date"]) for a in in_week}
+    return {
+        "week_start": start.isoformat(),
+        "active_days": len(days),
+        "goal_days": goal_days,
+        "goal_met": len(days) >= goal_days,
+        "active_minutes": round(sum(a["minutes"] for a in in_week)),
+    }
 
 
 def calendar(activities: list[dict], today: date, days: int = 28) -> list[dict]:
@@ -68,10 +73,17 @@ MILESTONES = [
     ("meditation_10", "10 Meditations", "Ten moments of calm. Well done."),
     ("memory_perfect", "Perfect Memory Game", "Every word, remembered. Sharp as a tack."),
     ("weekly_goal", "Weekly Goal Met", "You met your goal for the week."),
+    ("first_walk", "First Walk", "Your first walk, logged. One step at a time."),
+    ("first_ride", "First Ride", "Your first ride, logged. Keep on pedaling."),
+    ("active_60_week", "60 Active Minutes This Week", "Sixty minutes of activity this week. Wonderful."),
+    ("active_100_lifetime", "100 Active Minutes", "A hundred minutes of activity. That really adds up."),
 ]
 
+# Milestones re-earnable each new week (tracked per-week, not just once).
+WEEKLY_MILESTONES = {"weekly_goal", "active_60_week"}
 
-def _earned(mid: str, counts: Counter, streak: dict, week: dict, any_perfect: bool) -> bool:
+
+def _earned(mid: str, counts: Counter, streak: dict, week: dict, any_perfect: bool, lifetime_minutes: float) -> bool:
     total = sum(counts.values())
     return {
         "first_session": total >= 1,
@@ -82,25 +94,30 @@ def _earned(mid: str, counts: Counter, streak: dict, week: dict, any_perfect: bo
         "meditation_10": counts["meditation"] >= 10,
         "memory_perfect": any_perfect,
         "weekly_goal": week["goal_met"],
+        "first_walk": counts.get("walk", 0) >= 1,
+        "first_ride": counts.get("bike", 0) + counts.get("stationary_bike", 0) >= 1,
+        "active_60_week": week["active_minutes"] >= 60,
+        "active_100_lifetime": lifetime_minutes >= 100,
     }[mid]
 
 
 def check_milestones(user: dict, today: date) -> list[dict]:
     """Award any newly earned milestones. Mutates user; returns the new ones.
-    weekly_goal can be earned again each new week."""
+    Milestones in WEEKLY_MILESTONES can be earned again each new week."""
     acts = user["activities"]
     counts = Counter(a["type"] for a in acts)
     streak = streaks(acts, today)
     week = week_summary(acts, today, user.get("weekly_goal_days", 4))
     any_perfect = any(a["type"] == "memory_game" and a.get("details", {}).get("perfect") for a in acts)
+    lifetime_minutes = sum(a["minutes"] for a in acts)
 
     have = {(m["id"], m.get("week")) for m in user["milestones"]}
     new = []
     for mid, title, line in MILESTONES:
-        key_week = week["week_start"] if mid == "weekly_goal" else None
+        key_week = week["week_start"] if mid in WEEKLY_MILESTONES else None
         if (mid, key_week) in have:
             continue
-        if _earned(mid, counts, streak, week, any_perfect):
+        if _earned(mid, counts, streak, week, any_perfect, lifetime_minutes):
             m = {"id": mid, "title": title, "celebration": line, "earned_on": today.isoformat()}
             if key_week:
                 m["week"] = key_week

@@ -9,11 +9,28 @@ spoken-style reply.
 from __future__ import annotations
 
 import os
+import re
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from . import mcp_bridge
+
+# Nova Lite doesn't always keep its reasoning in a separate channel -- it
+# sometimes leaves a literal <thinking>...</thinking> preamble inside the
+# final reply text, and sometimes wraps the actual reply in <response>
+# tags. Strip/unwrap both so Vera never speaks her own reasoning or stray
+# markup aloud.
+_THINKING_RE = re.compile(r"<thinking>.*?</thinking>\s*", re.IGNORECASE | re.DOTALL)
+_RESPONSE_WRAP_RE = re.compile(r"^\s*<response>(.*?)</response>\s*$", re.IGNORECASE | re.DOTALL)
+
+
+def _clean_reply(text: str) -> str:
+    text = _THINKING_RE.sub("", text).strip()
+    wrapped = _RESPONSE_WRAP_RE.match(text)
+    if wrapped:
+        text = wrapped.group(1).strip()
+    return text
 
 REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
 MODEL_ID = os.environ.get("VERA_BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
@@ -28,13 +45,19 @@ SYSTEM_PROMPT = (
     "Vera is shared by a household: each person has their own profile, already "
     "chosen on screen before you start chatting, so just use the person you're "
     "given -- don't ask who they are. "
-    "You can offer games (there may be more than one -- call list_sessions to see "
-    "what's available), a seated chair stretch, a guided meditation, or show the "
-    "person their fitness log and progress. Always use your tools to actually do "
-    "these things rather than just describing them -- for example, call "
-    "start_memory_game instead of listing words yourself. When the person says "
-    "they finished a stretch or meditation, call log_completion. If a tool result "
-    "includes new_milestones, warmly celebrate each one by name."
+    "Call list_sessions to see what's currently available: games, exercise "
+    "routines (chair stretch, seated strength, balance, gentle walking -- some "
+    "may not have their video recorded yet, that's fine, the narration still "
+    "works), and meditations. Always use your tools to actually do these "
+    "things rather than just describing them -- for example, call "
+    "start_memory_game instead of listing words yourself. When the person "
+    "says they finished a guided stretch or meditation, call log_completion. "
+    "For anything else they did on their own -- a walk, a bike or stationary "
+    "bike ride, gardening, dancing, swimming, or any other activity, like 'I "
+    "walked for 20 minutes' or 'I did half an hour of gardening' -- call "
+    "log_activity instead, with your best guess at the minutes if they didn't "
+    "say a number. If a tool result includes new_milestones, warmly celebrate "
+    "each one by name."
 )
 
 _client = None
@@ -93,6 +116,7 @@ async def converse(message: str, history: list[dict], user_id: str = DEFAULT_USE
 
         if resp.get("stopReason") != "tool_use":
             reply = "".join(b.get("text", "") for b in output_message["content"])
+            reply = _clean_reply(reply)
             return {"reply": reply, "history": messages, "tool_calls": tool_calls}
 
         tool_results = []

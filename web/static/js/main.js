@@ -3,7 +3,14 @@ import { listen, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
 
-const SCREENS = ["start", "home", "games", "memory", "exercise", "stretch", "meditation", "progress"];
+const SCREENS = ["start", "home", "games", "memory", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity"];
+const ENCOURAGEMENTS = [
+  "You're doing wonderfully. Keep it up!",
+  "Nice and steady, just how we like it.",
+  "I'm so glad we're doing this together.",
+  "Keep going at your own pace.",
+  "You're doing great today.",
+];
 const MAX_HISTORY = 20;
 const REMEMBERED_USER_KEY = "vera_user_id";
 let conversationHistory = [];
@@ -62,10 +69,11 @@ function showScreen(name) {
   if (name === "games") renderGamesList();
   if (name === "exercise") renderExerciseList();
   if (name === "meditation") {
-    el("meditation-select").classList.remove("hidden");
+    renderMeditationList();
     el("meditation-session").classList.add("hidden");
   }
   if (name === "progress") renderProgress();
+  if (name === "log-activity") resetLogActivity();
 }
 
 async function say(text) {
@@ -214,6 +222,10 @@ async function handleBedrockToolCalls(toolCalls) {
       case "log_completion":
         if (current === "stretch") await renderActivityCompletion(call.result, "stretch-result");
         else if (current === "meditation") await renderActivityCompletion(call.result, "meditation-result");
+        break;
+      case "log_activity":
+        showScreen("progress");
+        await celebrate(call.result.new_milestones);
         break;
       case "get_fitness_log":
       case "get_streak":
@@ -365,19 +377,41 @@ async function renderExerciseList() {
     list.innerHTML = `<div class="say-text">Couldn't reach Vera's server.</div>`;
     return;
   }
-  list.innerHTML = data.stretch_routines.map((r) => `
+  const routineCards = data.stretch_routines.map((r) => `
     <button class="tile" data-routine-id="${escapeHtml(r.id)}">
-      <span class="tile-icon">🪑</span>
+      ${r.thumbnail_url ? `<img class="tile-thumb" src="${r.thumbnail_url}" alt="" />` : `<span class="tile-icon">🪑</span>`}
       <span class="tile-label">${escapeHtml(r.title)}</span>
       <span class="tile-desc">${r.minutes} minutes</span>
+      ${r.available ? "" : `<span class="tile-badge">Video coming soon</span>`}
     </button>
   `).join("");
+  const extraCards = `
+    <button class="tile" data-action="log-activity">
+      <span class="tile-icon">📝</span>
+      <span class="tile-label">Log an Activity</span>
+      <span class="tile-desc">Walk, bike, gardening, and more</span>
+    </button>
+    <button class="tile" data-action="start-walk">
+      <span class="tile-icon">🚶</span>
+      <span class="tile-label">Start a Walk</span>
+      <span class="tile-desc">Vera keeps you company</span>
+    </button>
+    <button class="tile" data-action="start-ride">
+      <span class="tile-icon">🚴</span>
+      <span class="tile-label">Start a Ride</span>
+      <span class="tile-desc">Vera keeps you company</span>
+    </button>
+  `;
+  list.innerHTML = routineCards + extraCards;
   list.querySelectorAll(".tile[data-routine-id]").forEach((btn) => {
     btn.addEventListener("click", () => {
       showScreen("stretch");
       startStretch(undefined, btn.dataset.routineId);
     });
   });
+  list.querySelector('[data-action="log-activity"]').addEventListener("click", () => showScreen("log-activity"));
+  list.querySelector('[data-action="start-walk"]').addEventListener("click", () => startTimedActivity("walk", "Walk"));
+  list.querySelector('[data-action="start-ride"]').addEventListener("click", () => startTimedActivity("bike", "Ride"));
 }
 
 // ---------- chair stretch ----------
@@ -387,6 +421,24 @@ async function renderActivityCompletion(result, resultElId) {
   el(resultElId).classList.remove("hidden");
   await say(result.say);
   await celebrate(result.new_milestones);
+}
+
+function renderStretchVideo(data) {
+  const box = el("stretch-video");
+  box.innerHTML = "";
+  if (data.available && data.media_url) {
+    box.classList.remove("video-placeholder");
+    const video = document.createElement("video");
+    video.src = data.media_url;
+    video.muted = true;
+    video.loop = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    box.appendChild(video);
+  } else {
+    box.classList.add("video-placeholder");
+    box.innerHTML = `<span class="video-placeholder-icon">🎬</span><span class="video-placeholder-text">Video coming soon</span>`;
+  }
 }
 
 async function startStretch(preloaded, routineId = "morning_chair_stretch") {
@@ -406,6 +458,7 @@ async function startStretch(preloaded, routineId = "morning_chair_stretch") {
     }
   }
   el("stretch-title").textContent = data.title || "Chair Stretch";
+  renderStretchVideo(data);
   await say(data.say);
   Companion.setVideoMode(true);
   for (const step of data.steps) {
@@ -486,27 +539,83 @@ function toggleStretchPause() {
 
 // ---------- meditation ----------
 
-async function startMeditation(meditationId, preloaded) {
-  el("meditation-select").classList.add("hidden");
-  el("meditation-session").classList.remove("hidden");
-  el("meditation-result").classList.add("hidden");
-  let data = preloaded;
-  if (!data) {
-    try {
-      data = await callTool("start_meditation", { meditation_id: meditationId, user_id: currentUserId });
-    } catch {
-      el("meditation-text").textContent = "Couldn't start meditation. Is the Vera server running?";
-      return;
-    }
+async function renderMeditationList() {
+  const list = el("meditation-select");
+  list.innerHTML = `<div class="say-text">Loading…</div>`;
+  let data;
+  try {
+    data = await callTool("list_sessions", {});
+  } catch {
+    list.innerHTML = `<div class="say-text">Couldn't reach Vera's server.</div>`;
+    return;
   }
-  el("meditation-text").textContent = data.title;
-  say(data.say);
+  if (!data.meditations.length) {
+    list.innerHTML = `<div class="say-text">No meditations yet — check back soon.</div>`;
+    return;
+  }
+  list.innerHTML = data.meditations.map((m) => `
+    <button class="tile" data-med-id="${escapeHtml(m.id)}">
+      ${m.thumbnail_url ? `<img class="tile-thumb" src="${m.thumbnail_url}" alt="" />` : `<span class="tile-icon">${m.type === "video" ? "🎬" : "🎧"}</span>`}
+      <span class="tile-label">${escapeHtml(m.title)}</span>
+      <span class="tile-desc">${m.minutes} minutes</span>
+      ${m.available ? "" : `<span class="tile-badge">Coming soon</span>`}
+    </button>
+  `).join("");
+  list.querySelectorAll(".tile[data-med-id]").forEach((btn) => {
+    btn.addEventListener("click", () => startMeditation(btn.dataset.medId));
+  });
+}
 
+async function finishMeditation(data, meditationId) {
+  if (current !== "meditation") return;
+  let result;
+  try {
+    result = await callTool("log_completion", {
+      activity_type: "meditation",
+      minutes: data.minutes,
+      session_id: meditationId,
+      user_id: currentUserId,
+    });
+  } catch {
+    return;
+  }
+  await renderActivityCompletion(result, "meditation-result");
+  el("meditation-session").classList.add("hidden");
+  renderMeditationList();
+}
+
+// Real recording available: play it for real, with its own time as the clock.
+function runRealMeditationMedia(data, meditationId) {
+  return new Promise((resolve) => {
+    const wrap = el("meditation-media-wrap");
+    wrap.innerHTML = "";
+    const mediaEl = document.createElement(data.type === "video" ? "video" : "audio");
+    mediaEl.src = data.media_url;
+    mediaEl.controls = true;
+    if (data.type === "video") mediaEl.playsInline = true;
+    wrap.appendChild(mediaEl);
+    Companion.setVideoMode(true);
+
+    const finish = async () => {
+      Companion.setVideoMode(false);
+      await finishMeditation(data, meditationId);
+      resolve();
+    };
+    mediaEl.addEventListener("ended", finish);
+    el("meditation-stop-btn").onclick = () => { mediaEl.pause(); finish(); };
+    mediaEl.play().catch(() => {});
+  });
+}
+
+// No recording yet: fall back to a synthetic countdown for the target length.
+async function runSyntheticMeditationTimer(data, meditationId) {
   let remaining = data.minutes * 60;
+  const circle = el("meditation-circle");
+  circle.classList.remove("hidden");
   const render = () => {
     const m = Math.floor(remaining / 60);
     const s = remaining % 60;
-    el("meditation-circle").textContent = `${m}:${String(s).padStart(2, "0")}`;
+    circle.textContent = `${m}:${String(s).padStart(2, "0")}`;
   };
   render();
   Companion.setVideoMode(true);
@@ -521,22 +630,120 @@ async function startMeditation(meditationId, preloaded) {
     }, 1000));
   });
   Companion.setVideoMode(false);
-  if (current !== "meditation") return;
+  await finishMeditation(data, meditationId);
+}
 
+async function startMeditation(meditationId, preloaded) {
+  el("meditation-select").classList.add("hidden");
+  el("meditation-session").classList.remove("hidden");
+  el("meditation-result").classList.add("hidden");
+  el("meditation-media-wrap").innerHTML = "";
+  el("meditation-circle").classList.add("hidden");
+  let data = preloaded;
+  if (!data) {
+    try {
+      data = await callTool("start_meditation", { meditation_id: meditationId, user_id: currentUserId });
+    } catch {
+      el("meditation-text").textContent = "Couldn't start meditation. Is the Vera server running?";
+      return;
+    }
+  }
+  el("meditation-text").textContent = data.title;
+  say(data.say);
+
+  if (data.available && data.media_url) {
+    await runRealMeditationMedia(data, meditationId);
+  } else {
+    await runSyntheticMeditationTimer(data, meditationId);
+  }
+}
+
+// ---------- log an activity ----------
+
+let logActivityState = { activity: null, minutes: null, feeling: null };
+
+function showLogStep(step) {
+  ["activity", "custom", "minutes", "feeling", "done"].forEach((s) => {
+    el(`log-step-${s}`).classList.toggle("hidden", s !== step);
+  });
+}
+
+function resetLogActivity() {
+  logActivityState = { activity: null, minutes: null, feeling: null };
+  el("log-custom-name").value = "";
+  showLogStep("activity");
+}
+
+async function finishLogActivity(feeling) {
+  logActivityState.feeling = feeling;
+  showLogStep("done");
+  el("log-result").textContent = "Logging…";
   let result;
   try {
-    result = await callTool("log_completion", {
-      activity_type: "meditation",
-      minutes: data.minutes,
-      session_id: meditationId,
+    result = await callTool("log_activity", {
+      activity: logActivityState.activity,
+      minutes: logActivityState.minutes,
+      feeling: logActivityState.feeling || undefined,
       user_id: currentUserId,
     });
   } catch {
+    el("log-result").textContent = "Something went wrong logging that. Please try again.";
     return;
   }
-  await renderActivityCompletion(result, "meditation-result");
-  el("meditation-select").classList.remove("hidden");
-  el("meditation-session").classList.add("hidden");
+  el("log-result").textContent =
+    `Logged ${logActivityState.minutes} minutes of ${result.activity.replace("_", " ")}. `
+    + `Streak: ${result.streak.current} day${result.streak.current === 1 ? "" : "s"}.`;
+  await say(result.say);
+  await celebrate(result.new_milestones);
+}
+
+// ---------- start a walk / start a ride ----------
+
+let timedActivityKind = null;
+let timedActivityElapsed = 0;
+
+function startTimedActivity(kind, label) {
+  timedActivityKind = kind;
+  timedActivityElapsed = 0;
+  el("timed-activity-title").textContent = label;
+  el("timed-activity-result").classList.add("hidden");
+  el("timed-activity-circle").textContent = "0:00";
+  showScreen("timed-activity");
+
+  const renderClock = () => {
+    const m = Math.floor(timedActivityElapsed / 60);
+    const s = timedActivityElapsed % 60;
+    el("timed-activity-circle").textContent = `${m}:${String(s).padStart(2, "0")}`;
+  };
+  trackTimer(setInterval(() => {
+    timedActivityElapsed += 1;
+    renderClock();
+  }, 1000));
+
+  let encIndex = 0;
+  trackTimer(setInterval(() => {
+    if (current !== "timed-activity") return;
+    say(ENCOURAGEMENTS[encIndex % ENCOURAGEMENTS.length]);
+    encIndex += 1;
+  }, 180000));
+
+  say(`Alright, let's get started. I'll check in with you every few minutes. Tap I'm Done whenever you're ready to stop.`);
+}
+
+async function finishTimedActivity() {
+  const minutes = Math.max(1, Math.round(timedActivityElapsed / 60));
+  clearActiveTimers();
+  let result;
+  try {
+    result = await callTool("log_activity", { activity: timedActivityKind, minutes, user_id: currentUserId });
+  } catch {
+    return;
+  }
+  el("timed-activity-result").textContent =
+    `Logged ${minutes} minute${minutes === 1 ? "" : "s"}. Streak: ${result.streak.current} day${result.streak.current === 1 ? "" : "s"}.`;
+  el("timed-activity-result").classList.remove("hidden");
+  await say(result.say);
+  await celebrate(result.new_milestones);
 }
 
 // ---------- progress / fitness log ----------
@@ -555,7 +762,8 @@ async function renderProgress() {
   el("progress-streak").textContent =
     `${log.streak.current} day streak (longest: ${log.streak.longest}) — ${log.total_minutes} minutes total`;
   el("progress-week").textContent =
-    `This week: ${log.week.active_days} of ${log.week.goal_days} active days` +
+    `This week: ${log.week.active_days} of ${log.week.goal_days} active days, ` +
+    `${log.week.active_minutes} active minutes` +
     (log.week.goal_met ? " — goal met!" : "");
 
   const dayLabel = (iso) => new Date(iso + "T00:00:00").getDate();
@@ -607,9 +815,40 @@ function init() {
     btn.addEventListener("click", () => showScreen(btn.dataset.intent));
   });
 
-  document.querySelectorAll("#meditation-select .tile[data-med]").forEach((btn) => {
-    btn.addEventListener("click", () => startMeditation(btn.dataset.med));
+  document.querySelectorAll("#log-step-activity .tile[data-activity]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const activity = btn.dataset.activity;
+      if (activity === "other") {
+        showLogStep("custom");
+        el("log-custom-name").focus();
+      } else {
+        logActivityState.activity = activity;
+        showLogStep("minutes");
+      }
+    });
   });
+  const confirmCustomActivity = () => {
+    const name = el("log-custom-name").value.trim();
+    if (!name) return;
+    logActivityState.activity = name;
+    showLogStep("minutes");
+  };
+  el("log-custom-next").addEventListener("click", confirmCustomActivity);
+  el("log-custom-name").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirmCustomActivity();
+  });
+  document.querySelectorAll("#log-step-minutes .tile[data-minutes]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      logActivityState.minutes = Number(btn.dataset.minutes);
+      showLogStep("feeling");
+    });
+  });
+  document.querySelectorAll("#log-step-feeling [data-feeling]").forEach((btn) => {
+    btn.addEventListener("click", () => finishLogActivity(btn.dataset.feeling));
+  });
+  el("log-feeling-skip").addEventListener("click", () => finishLogActivity(null));
+  el("log-again-btn").addEventListener("click", resetLogActivity);
+  el("timed-activity-done-btn").addEventListener("click", finishTimedActivity);
 
   el("memory-listen-btn").addEventListener("click", captureSpeech);
   el("memory-again-btn").addEventListener("click", () => startMemoryGame());

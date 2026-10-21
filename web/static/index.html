@@ -85,7 +85,7 @@
     <section id="screen-stretch" class="screen hidden">
       <div class="vera-slot" id="vera-slot-stretch" data-size="corner"></div>
       <h1 class="screen-title" id="stretch-title">Chair Stretch</h1>
-      <div id="stretch-video" class="video-box">🪑</div>
+      <div id="stretch-video" class="video-box"></div>
       <div id="stretch-step-name" class="big-text"></div>
       <div id="stretch-say" class="say-text"></div>
       <div class="progress-bar"><div id="stretch-progress-fill" class="progress-fill"></div></div>
@@ -99,19 +99,10 @@
     <section id="screen-meditation" class="screen hidden">
       <div class="vera-slot" id="vera-slot-meditation" data-size="corner"></div>
       <h1 class="screen-title">Meditation</h1>
-      <div id="meditation-select" class="tiles small">
-        <button class="tile" data-med="short_calm">
-          <span class="tile-icon">🕊️</span><span class="tile-label">3 Minute Calm</span>
-        </button>
-        <button class="tile" data-med="long_calm">
-          <span class="tile-icon">🌙</span><span class="tile-label">10 Minute Calm</span>
-        </button>
-        <button class="tile" data-med="bedtime">
-          <span class="tile-icon">⭐</span><span class="tile-label">Bedtime Wind Down</span>
-        </button>
-      </div>
+      <div id="meditation-select" class="tiles small"></div>
       <div id="meditation-session" class="hidden">
-        <div id="meditation-circle">10:00</div>
+        <div id="meditation-media-wrap"></div>
+        <div id="meditation-circle" class="hidden">10:00</div>
         <div id="meditation-text" class="say-text"></div>
         <div id="meditation-result" class="result-box hidden"></div>
         <div class="action-row">
@@ -128,6 +119,66 @@
       <div id="progress-calendar" class="calendar-grid"></div>
       <h2 class="section-sub">Badges Earned</h2>
       <div id="progress-badges" class="badge-row"></div>
+    </section>
+
+    <section id="screen-log-activity" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-log-activity" data-size="corner"></div>
+      <h1 class="screen-title">Log an Activity</h1>
+
+      <div id="log-step-activity" class="tiles small">
+        <button class="tile" data-activity="walk"><span class="tile-icon">🚶</span><span class="tile-label">Walk</span></button>
+        <button class="tile" data-activity="bike"><span class="tile-icon">🚴</span><span class="tile-label">Bike</span></button>
+        <button class="tile" data-activity="stationary_bike"><span class="tile-icon">🚲</span><span class="tile-label">Stationary Bike</span></button>
+        <button class="tile" data-activity="gardening"><span class="tile-icon">🌱</span><span class="tile-label">Gardening</span></button>
+        <button class="tile" data-activity="dancing"><span class="tile-icon">💃</span><span class="tile-label">Dancing</span></button>
+        <button class="tile" data-activity="swimming"><span class="tile-icon">🏊</span><span class="tile-label">Swimming</span></button>
+        <button class="tile" data-activity="other"><span class="tile-icon">✏️</span><span class="tile-label">Other</span></button>
+      </div>
+
+      <div id="log-step-custom" class="hidden">
+        <input id="log-custom-name" type="text" placeholder="What did you do?" autocomplete="off" />
+        <button id="log-custom-next" class="primary-btn">Next</button>
+      </div>
+
+      <div id="log-step-minutes" class="hidden">
+        <div class="big-text">How many minutes?</div>
+        <div class="tiles small">
+          <button class="tile" data-minutes="5"><span class="tile-label">5 min</span></button>
+          <button class="tile" data-minutes="10"><span class="tile-label">10 min</span></button>
+          <button class="tile" data-minutes="15"><span class="tile-label">15 min</span></button>
+          <button class="tile" data-minutes="20"><span class="tile-label">20 min</span></button>
+          <button class="tile" data-minutes="30"><span class="tile-label">30 min</span></button>
+          <button class="tile" data-minutes="45"><span class="tile-label">45 min</span></button>
+          <button class="tile" data-minutes="60"><span class="tile-label">60 min</span></button>
+        </div>
+      </div>
+
+      <div id="log-step-feeling" class="hidden">
+        <div class="big-text">How are you feeling?</div>
+        <div class="action-row">
+          <button class="secondary-btn" data-feeling="happy">😊 Happy</button>
+          <button class="secondary-btn" data-feeling="okay">🙂 Okay</button>
+          <button class="secondary-btn" data-feeling="tired">😴 Tired</button>
+          <button class="secondary-btn" id="log-feeling-skip">Skip</button>
+        </div>
+      </div>
+
+      <div id="log-step-done" class="hidden">
+        <div id="log-result" class="result-box"></div>
+        <div class="action-row">
+          <button id="log-again-btn" class="primary-btn">Log Another</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-timed-activity" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-timed-activity" data-size="corner"></div>
+      <h1 class="screen-title" id="timed-activity-title">Walk</h1>
+      <div id="timed-activity-circle">0:00</div>
+      <div id="timed-activity-result" class="result-box hidden"></div>
+      <div class="action-row">
+        <button id="timed-activity-done-btn" class="secondary-btn">I'm Done</button>
+      </div>
     </section>
 
   </main>

@@ -8,12 +8,13 @@ Run:  python server.py
 from __future__ import annotations
 
 import os
+import re
 from datetime import date
 
 from mcp.server.fastmcp import FastMCP
 
-from vera import memory_game, progress
-from vera.content import GAMES, MEDITATIONS, STRETCH_ROUTINES
+from vera import media, memory_game, progress
+from vera.content import GAMES
 from vera.storage import Store
 
 HOST = os.environ.get("VERA_HOST", "127.0.0.1")
@@ -23,9 +24,12 @@ mcp = FastMCP(
     "Vera",
     instructions=(
         "Vera is a warm wellness companion for older adults. Speak slowly, kindly, "
-        "and in short sentences. Never shame missed days. Offer the memory game, a "
-        "chair stretch, or a meditation. After any completed session, call "
-        "log_completion and celebrate any new milestones it returns."
+        "and in short sentences. Never shame missed days. Offer games, exercise "
+        "routines, or meditations -- call list_sessions to see what's available. "
+        "After a completed guided session, call log_completion; for anything else "
+        "the person did on their own (a walk, a bike ride, gardening, dancing, "
+        "swimming, or any other activity), call log_activity instead. Celebrate "
+        "any new milestones a tool call returns."
     ),
     host=HOST,
     port=PORT,
@@ -41,6 +45,11 @@ def _today(on_date: str | None) -> date:
 def _log(user: dict, activity_type: str, minutes: float, day: date, details: dict | None = None) -> list[dict]:
     user["activities"].append({"type": activity_type, "date": day.isoformat(), "minutes": minutes, "details": details or {}})
     return progress.check_milestones(user, day)
+
+
+def _slugify_activity(name: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    return key or "activity"
 
 
 # ---------- Profile ----------
@@ -123,40 +132,54 @@ def submit_memory_answer(answer: str, user_id: str = "demo", on_date: str | None
 
 @mcp.tool()
 def list_sessions() -> dict:
-    """List the available games, chair stretch routines, and meditations."""
+    """List the available games, exercise routines, and meditations. Each
+    exercise/meditation is flagged 'available' (its real recording exists)
+    or not yet (show a friendly 'coming soon' note)."""
     return {
         "games": [{"id": k, "title": v["title"], "description": v["description"]} for k, v in GAMES.items()],
-        "stretch_routines": [{"id": k, "title": v["title"], "minutes": v["minutes"]} for k, v in STRETCH_ROUTINES.items()],
-        "meditations": [{"id": k, "title": v["title"], "minutes": v["minutes"]} for k, v in MEDITATIONS.items()],
+        "stretch_routines": [
+            {"id": r["id"], "title": r["title"], "minutes": r["minutes"], "available": r["available"], "thumbnail_url": r["thumbnail_url"]}
+            for r in media.exercise_routines()
+        ],
+        "meditations": [
+            {"id": m["id"], "title": m["title"], "minutes": m["minutes"], "type": m.get("type", "audio"), "available": m["available"], "thumbnail_url": m["thumbnail_url"]}
+            for m in media.meditations()
+        ],
     }
 
 
 @mcp.tool()
 def start_stretch_routine(routine_id: str = "morning_chair_stretch", user_id: str = "demo") -> dict:
-    """Start a guided, fully seated chair stretch. Returns the video and the
-    step by step narration Vera speaks while it plays (including a halfway check in)."""
-    r = STRETCH_ROUTINES.get(routine_id)
+    """Start a guided, fully seated or standing exercise routine (chair
+    stretch, seated strength, balance, or gentle walking). Returns the real
+    video if it's been recorded yet, and the step by step narration Vera
+    speaks while it plays either way (including a halfway check in)."""
+    r = media.exercise_routine(routine_id)
     if not r:
-        return {"error": f"Unknown routine. Options: {list(STRETCH_ROUTINES)}"}
+        return {"error": f"Unknown routine. Options: {[x['id'] for x in media.exercise_routines()]}"}
     name = store.get_user(user_id)["name"]
-    return {"routine_id": routine_id, **r, "say": f"Alright {name}, let's stretch together. Everything today is done sitting down."}
+    return {**r, "routine_id": routine_id, "say": f"Alright {name}, let's do {r['title'].lower()} together."}
 
 
 @mcp.tool()
-def start_meditation(meditation_id: str = "short_calm", user_id: str = "demo") -> dict:
-    """Start a guided meditation: short_calm (3 min), long_calm (10 min), or bedtime."""
-    m = MEDITATIONS.get(meditation_id)
+def start_meditation(meditation_id: str = "healing_affirmations", user_id: str = "demo") -> dict:
+    """Start a guided meditation. Call list_sessions first to see what's
+    available. Returns the real audio or video if it's been recorded, or an
+    intro line and a target length otherwise."""
+    m = media.meditation(meditation_id)
     if not m:
-        return {"error": f"Unknown meditation. Options: {list(MEDITATIONS)}"}
-    return {"meditation_id": meditation_id, **m, "say": m["intro"]}
+        return {"error": f"Unknown meditation. Options: {[x['id'] for x in media.meditations()]}"}
+    return {**m, "meditation_id": meditation_id, "say": m["intro"]}
 
 
 @mcp.tool()
 def log_completion(activity_type: str, minutes: float, user_id: str = "demo", session_id: str | None = None, on_date: str | None = None) -> dict:
-    """Record a finished stretch or meditation session. activity_type is
-    'stretch' or 'meditation'. Returns updated streak and any new milestones to celebrate."""
+    """Record a finished guided stretch/exercise or meditation session.
+    activity_type is 'stretch' or 'meditation'. For anything else the person
+    did on their own, use log_activity instead. Returns updated streak and
+    any new milestones to celebrate."""
     if activity_type not in ("stretch", "meditation"):
-        return {"error": "activity_type must be 'stretch' or 'meditation' (memory games log themselves)."}
+        return {"error": "activity_type must be 'stretch' or 'meditation' (memory games log themselves; other activities use log_activity)."}
     u = store.get_user(user_id)
     day = _today(on_date)
     new = _log(u, activity_type, minutes, day, {"session_id": session_id} if session_id else None)
@@ -166,6 +189,26 @@ def log_completion(activity_type: str, minutes: float, user_id: str = "demo", se
     if new:
         say += " " + " ".join(m["celebration"] for m in new)
     return {"logged": True, "streak": s, "new_milestones": new, "say": say}
+
+
+@mcp.tool()
+def log_activity(activity: str, minutes: float, user_id: str = "demo", feeling: str | None = None, on_date: str | None = None) -> dict:
+    """Log a self-reported activity that doesn't have its own guided session:
+    a walk, a bike ride, a stationary bike ride, gardening, dancing,
+    swimming, or any other activity by name (for example 'yoga'). Counts
+    toward the streak, weekly goal, and milestones just like a stretch or
+    meditation. feeling is optional: 'happy', 'okay', or 'tired'."""
+    activity_key = _slugify_activity(activity)
+    u = store.get_user(user_id)
+    day = _today(on_date)
+    details = {"feeling": feeling} if feeling else None
+    new = _log(u, activity_key, minutes, day, details)
+    store.save_user(u)
+    s = progress.streaks(u["activities"], day)
+    say = f"Nice work, {u['name']}! I've logged your {activity_key.replace('_', ' ')}."
+    if new:
+        say += " " + " ".join(m["celebration"] for m in new)
+    return {"logged": True, "activity": activity_key, "streak": s, "new_milestones": new, "say": say}
 
 
 # ---------- Fitness log ----------

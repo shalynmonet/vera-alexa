@@ -75,6 +75,20 @@ def test_full_flow(tmp_path):
                     profiles = _data(await s.call_tool("list_profiles", {}))
                     assert {p["user_id"] for p in profiles["profiles"]} == {"demo", "tom"}
 
+                    assert {r["id"] for r in sessions["stretch_routines"]} == {
+                        "morning_chair_stretch", "seated_strength", "balance", "gentle_walking",
+                    }
+                    assert all(not r["available"] for r in sessions["stretch_routines"])
+                    med_ids = {m["id"] for m in sessions["meditations"]}
+                    assert "healing_affirmations" in med_ids
+
+                    walk = _data(await s.call_tool("log_activity", {"activity": "walk", "minutes": 20, "feeling": "happy"}))
+                    assert walk["activity"] == "walk"
+                    assert "first_walk" in {m["id"] for m in walk["new_milestones"]}
+
+                    custom = _data(await s.call_tool("log_activity", {"activity": "Evening Yoga!", "minutes": 15}))
+                    assert custom["activity"] == "evening_yoga"
+
         asyncio.run(run())
     finally:
         proc.terminate()

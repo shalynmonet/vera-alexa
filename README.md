@@ -14,16 +14,29 @@ Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the o
 | `list_profiles`, `create_profile` | Everyone sharing this Vera, for the start screen's profile picker |
 | `start_memory_game` | Picks 3 to 6 familiar words for Vera to read aloud |
 | `submit_memory_answer` | Scores the spoken answer (forgiving of order and mishearings), adapts difficulty, logs the game |
-| `list_sessions` | Available games, stretch routines, and meditations |
-| `start_stretch_routine` | Seated stretch video plus step by step narration with a halfway check in |
-| `start_meditation` | 3 min, 10 min, or bedtime meditation |
-| `log_completion` | Records a finished stretch or meditation, returns streak and new milestones |
-| `get_fitness_log` | Calendar grid, totals, streak, weekly goal, badges |
+| `list_sessions` | Available games, exercise routines, and meditations, each flagged whether its real recording exists yet |
+| `start_stretch_routine` | A guided exercise routine (chair stretch, seated strength, balance, gentle walking): real video if recorded, step by step narration either way |
+| `start_meditation` | A guided meditation: real audio/video if recorded, or an intro line and target length otherwise |
+| `log_completion` | Records a finished guided stretch/exercise or meditation session, returns streak and new milestones |
+| `log_activity` | Logs a self-reported activity with no guided session -- a walk, bike or stationary bike ride, gardening, dancing, swimming, or anything else by name -- toward the same streak, goal, and milestones |
+| `get_fitness_log` | Calendar grid, totals, streak, weekly goal (days and minutes), badges |
 | `get_streak` | Current and longest streak |
 | `check_milestones` | Awards any newly earned badges |
-| `get_daily_summary` | Caregiver friendly summary of the day |
+| `get_daily_summary` | Caregiver friendly summary of the day, including self-reported activities |
 
 **Design choices for older users:** every activity counts toward the streak, one missed day is forgiven (grace day), and missed days are never framed as failures.
+
+### Exercise and meditation media
+
+Real videos and audio live in `web/static/media/exercise/` and `web/static/media/meditations/`, each described by a hand-edited `manifest.json` alongside the files (title, minutes, file, thumbnail, and for exercise, narration steps). `vera/media.py` checks whether each manifest entry's file actually exists and reports it as `available`, so a routine with no recording yet simply shows a friendly "coming soon" card -- no code change needed once the real file is dropped in with the filename the manifest expects. The four exercise routines (chair stretch, seated strength, balance, gentle walking) ship as narration-only placeholders today; meditations are built from whatever real files are already in the folder (currently one: "Healing Affirmations").
+
+### Logging any activity, three ways
+
+Beyond the guided sessions, three ways to log an unguided activity (walk, bike, stationary bike, gardening, dancing, swimming, or anything else by name) all land on the same `log_activity` tool:
+
+1. **Voice, through Nova** -- "I walked for 20 minutes" or "I did half an hour of gardening."
+2. **Log an Activity button** (on the Exercise screen) -- pick the activity, then minutes (5 to 60), then an optional feeling.
+3. **Start a Walk / Start a Ride** (also on Exercise) -- a live stopwatch; Vera checks in every few minutes, and tapping "I'm Done" logs the elapsed time automatically.
 
 Every tool accepts an optional `on_date` (YYYY-MM-DD) so demos and tests can use a fixed date.
 

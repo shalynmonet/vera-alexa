@@ -26,6 +26,8 @@ const SECTION_POSE = {
   memory: "thinking",
   exercise: "exercising",
   stretch: "exercising",
+  "log-activity": "exercising",
+  "timed-activity": "exercising",
   meditation: "meditating",
   progress: "celebrating",
 };

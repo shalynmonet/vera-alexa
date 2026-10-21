@@ -67,3 +67,46 @@ def test_difficulty_adapts():
 def test_calendar_length():
     cal = progress.calendar(acts(0, 3), T, 28)
     assert len(cal) == 28 and cal[-1]["active"] and cal[-1]["date"] == T.isoformat()
+
+
+def test_week_summary_active_minutes():
+    w = progress.week_summary(acts(0, 1, kind="walk"), T, 4)
+    assert w["active_minutes"] == 10
+
+
+def test_first_walk_milestone():
+    user = {"activities": acts(0, kind="walk"), "milestones": [], "weekly_goal_days": 4}
+    ids = {m["id"] for m in progress.check_milestones(user, T)}
+    assert "first_walk" in ids
+
+
+def test_first_ride_milestone_counts_bike_and_stationary_bike():
+    user = {"activities": acts(0, kind="stationary_bike"), "milestones": [], "weekly_goal_days": 4}
+    ids = {m["id"] for m in progress.check_milestones(user, T)}
+    assert "first_ride" in ids
+
+
+def test_active_60_minutes_this_week_milestone():
+    activities = [{"type": "walk", "date": T.isoformat(), "minutes": 70, "details": {}}]
+    user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}
+    ids = {m["id"] for m in progress.check_milestones(user, T)}
+    assert "active_60_week" in ids
+
+
+def test_active_100_lifetime_minutes_milestone():
+    activities = [{"type": "walk", "date": (T - timedelta(days=i)).isoformat(), "minutes": 50, "details": {}} for i in range(3)]
+    user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}
+    ids = {m["id"] for m in progress.check_milestones(user, T)}
+    assert "active_100_lifetime" in ids
+
+
+def test_weekly_milestones_are_reearnable_next_week():
+    activities = [{"type": "walk", "date": T.isoformat(), "minutes": 70, "details": {}}]
+    user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}
+    progress.check_milestones(user, T)
+    assert any(m["id"] == "active_60_week" for m in user["milestones"])
+
+    next_week = T + timedelta(days=7)
+    user["activities"].append({"type": "walk", "date": next_week.isoformat(), "minutes": 70, "details": {}})
+    new = progress.check_milestones(user, next_week)
+    assert any(m["id"] == "active_60_week" for m in new)
