@@ -249,6 +249,19 @@ html, body {
 }
 .result-box.hidden { display: none; }
 
+#stretch-display-banner, #meditation-display-banner {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 30px;
+  max-width: 500px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
 .action-row {
   display: flex;
   gap: 16px;

@@ -1,0 +1,130 @@
+/* Living Room Display -- a SIMULATED Fire TV: dark, very high contrast,
+   oversized type meant to be read from across a room. Standalone page,
+   not part of the main app's design system (deliberately a different,
+   "big screen" look). */
+
+:root {
+  --tv-bg: #16130f;
+  --tv-card: #231d16;
+  --tv-ink: #fdf8f0;
+  --tv-ink-soft: #c9bfae;
+  --tv-accent: #f08a3c;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--tv-bg);
+  color: var(--tv-ink);
+  font-family: "Inter", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#tv-screen {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px;
+  position: relative;
+}
+
+.hidden { display: none !important; }
+
+#tv-vera, #tv-vera-small {
+  border-radius: 50%;
+  background: var(--tv-card);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#tv-vera { width: 220px; height: 220px; }
+#tv-vera-small { width: 110px; height: 110px; margin: 0 auto 12px; }
+#tv-vera img, #tv-vera-small img { width: 100%; height: 100%; object-fit: contain; }
+
+#tv-idle h1, #tv-session h1 {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-size: 3.6rem;
+  font-weight: 700;
+  margin: 16px 0 8px;
+}
+
+#tv-idle-text, #tv-say {
+  font-size: 1.8rem;
+  color: var(--tv-ink-soft);
+  max-width: 900px;
+}
+
+#tv-step {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-size: 2.2rem;
+  font-weight: 600;
+  color: var(--tv-accent);
+  margin: 0 0 10px;
+}
+
+#tv-progress-track {
+  width: 60%;
+  max-width: 700px;
+  height: 18px;
+  background: var(--tv-card);
+  border-radius: 999px;
+  margin-top: 28px;
+  overflow: hidden;
+}
+
+#tv-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--tv-accent);
+  transition: width 0.4s ease;
+}
+
+#tv-footer {
+  position: absolute;
+  bottom: 18px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tv-ink-soft);
+  opacity: 0.7;
+}
+
+#tv-cheer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(22, 19, 15, 0.96);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  z-index: 20;
+}
+
+#tv-cheer-from {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-size: 2.8rem;
+}
+
+#tv-cheer-photo, #tv-cheer-video {
+  max-width: 70vw;
+  max-height: 60vh;
+  border-radius: 24px;
+  object-fit: cover;
+  background: #000;
+}
+
+@media (max-width: 700px) {
+  #tv-idle h1, #tv-session h1 { font-size: 2.4rem; }
+  #tv-step { font-size: 1.6rem; }
+  #tv-idle-text, #tv-say { font-size: 1.3rem; }
+}

@@ -72,6 +72,7 @@ The included **web simulator** (`web/app.py`) exists so this could be built and 
 | `get_cheer_prompts` | Ready-made cheer scripts generated from the person's real data -- one per close milestone, three fixed "anytime" lines, one per activity they actually do |
 | `add_cheer`, `list_cheers`, `next_cheer`, `mark_cheer_played`, `delete_cheer` | Save, browse, and play back family cheers -- each is locked until its milestone/activity condition is met, then surfaces through `next_cheer`'s daily cap and family-member rotation |
 | `check_family_alerts`, `mark_alert_sent` | "Running low" email nudges when a family member's unlocked-cheer queue drops to 1 or 0, sent once per drop |
+| `handoff_session_to_display`, `get_display_session` | Hands the active exercise/meditation/progress session to a simulated display (the Living Room TV), or brings it back to the main screen |
 
 **Design choices for older users:** every activity counts toward the streak, one missed day is forgiven (grace day), and missed days are never framed as failures.
 
@@ -189,6 +190,25 @@ Automatic SMS nudges (the invite itself is always just a plain `sms:`
 link, no AWS involved) are built on AWS End User Messaging SMS behind
 `VERA_SMS_ENABLED` (off by default, since it needs a registered toll-free
 number -- see Configuration) and always append "Reply STOP to opt out."
+
+### Simulated living room display
+
+**`/tv/<user_id>` is a SIMULATED Fire TV display, not a real device
+integration** -- said plainly in its own footer, since nothing here talks
+to an actual Fire TV. Saying "put this on the TV" (or "let's do chair yoga
+in the living room") while an exercise, meditation, or progress session is
+open calls `handoff_session_to_display`, which stores a small snapshot of
+what's currently playing; the same "📺 Send to Living Room" button does
+the same thing directly, for testing without voice. The main screen keeps
+actually driving the session -- timers, narration, milestone/cheer checks
+are all unchanged -- it just swaps its detailed view for a "Now playing on
+Living Room TV" banner with a "Bring it back" button. The `/tv` page
+subscribes over server-sent events (`/api/display/events/<user_id>`) and
+mirrors that snapshot close to instantly, including a cheer that comes due
+mid-workout, which plays full screen there instead of on the main screen
+("voice + photo" cheers show the photo while the audio plays). Bringing it
+back (either button) clears the handoff and the TV returns to its idle
+"waiting for a session" state.
 
 ## Media storage: local vs. S3
 

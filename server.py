@@ -40,7 +40,10 @@ mcp = FastMCP(
         "about messages from family, check list_cheers. If asked how they're "
         "doing with a particular game lately, check get_engagement_trends -- "
         "share it warmly and plainly, never as a score, a diagnosis, or a "
-        "health claim."
+        "health claim. If asked to put the current exercise, meditation, or "
+        "progress screen on the TV (or similar, like 'let's do chair yoga in "
+        "the living room'), call handoff_session_to_display; if asked to bring "
+        "it back to the main screen, call it again with session left out."
     ),
     host=HOST,
     port=PORT,
@@ -823,6 +826,35 @@ def mark_alert_sent(family_id: str, unplayed: int, user_id: str = "demo") -> dic
     member["low_queue_notified_at"] = unplayed
     store.save_user(u)
     return {"ok": True}
+
+
+# ---------- Simulated living room display ----------
+
+@mcp.tool()
+def handoff_session_to_display(user_id: str = "demo", display: str = "tv", session: dict | None = None) -> dict:
+    """Hand the active session (an exercise routine, a meditation, or the
+    progress screen) from the main screen to a simulated display, such as
+    the Living Room TV -- call this when the person asks to 'put this on
+    the TV' or similar ('let's do chair yoga in the living room'). session
+    is a small, free-form snapshot of what's currently playing (title,
+    current step, progress) that the display mirrors; pass session=None to
+    bring the session back to the main screen."""
+    u = store.get_user(user_id)
+    u["display_session"] = (
+        {"display": display, "session": session, "updated_at": datetime.now().isoformat()}
+        if session is not None else None
+    )
+    store.save_user(u)
+    return {"ok": True, "active": session is not None}
+
+
+@mcp.tool()
+def get_display_session(user_id: str = "demo") -> dict:
+    """The session currently handed off to a simulated display, if any --
+    polled by the display itself (and by the main screen, to know whether
+    to show 'Now playing on Living Room TV') to mirror playback."""
+    u = store.get_user(user_id)
+    return u.get("display_session") or {"display": None, "session": None, "updated_at": None}
 
 
 def build_app():

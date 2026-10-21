@@ -160,14 +160,59 @@ async function tryPlayNextCheer({ onAppOpen = false } = {}) {
     return false;
   }
   if (!cheer) return false;
-  await say(onAppOpen ? `You have a message from ${cheer.family_name}.` : "Someone has a message for you!");
-  await showCheerOverlay(cheer);
+
+  if (displayActive) {
+    // The session is on the Living Room TV -- the cheer shows there
+    // instead of on the main screen (see web/static/js/tv.js).
+    await pushDisplaySnapshot({ ...lastDisplaySnapshot, cheer });
+    await sleep(6000);
+    await pushDisplaySnapshot({ ...lastDisplaySnapshot, cheer: null });
+  } else {
+    await say(onAppOpen ? `You have a message from ${cheer.family_name}.` : "Someone has a message for you!");
+    await showCheerOverlay(cheer);
+  }
   try {
     await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId });
   } catch {
     // not fatal -- worst case it's offered again next time
   }
   return true;
+}
+
+// ---------- simulated living room display ----------
+// A SIMULATED Fire TV (see web/static/tv/display.html) -- handing a
+// session off to it just means mirroring a small snapshot of what's
+// currently playing through handoff_session_to_display, which the TV page
+// picks up over server-sent events (web/static/js/tv.js). The main screen
+// keeps actually driving the session (timers, narration, cheer checks);
+// it just hides its own detailed UI in favor of a small banner while a
+// session is handed off.
+
+let displayActive = false;
+let lastDisplaySnapshot = null;
+
+async function pushDisplaySnapshot(session) {
+  lastDisplaySnapshot = session;
+  try {
+    await callTool("handoff_session_to_display", { user_id: currentUserId, display: "tv", session });
+  } catch {
+    // best-effort -- the main screen still works fine on its own
+  }
+}
+
+function sendToDisplay(initialSession, bannerId, detailId) {
+  displayActive = true;
+  el(bannerId).classList.remove("hidden");
+  el(detailId).classList.add("hidden");
+  pushDisplaySnapshot(initialSession);
+}
+
+function bringBackFromDisplay(bannerId, detailId) {
+  displayActive = false;
+  lastDisplaySnapshot = null;
+  el(bannerId).classList.add("hidden");
+  el(detailId).classList.remove("hidden");
+  callTool("handoff_session_to_display", { user_id: currentUserId, session: null }).catch(() => {});
 }
 
 function escapeHtml(s) {
@@ -813,6 +858,7 @@ function renderStretchVideo(data) {
 }
 
 async function startStretch(preloaded, routineId = "morning_chair_stretch") {
+  bringBackFromDisplay("stretch-display-banner", "stretch-detail");
   el("stretch-result").classList.add("hidden");
   el("stretch-step-name").textContent = "Getting ready…";
   el("stretch-say").textContent = "";
@@ -832,11 +878,17 @@ async function startStretch(preloaded, routineId = "morning_chair_stretch") {
   renderStretchVideo(data);
   await say(data.say);
   Companion.setVideoMode(true);
-  for (const step of data.steps) {
+  for (const [stepIndex, step] of data.steps.entries()) {
     if (current !== "stretch") return;
     el("stretch-step-name").textContent = step.name;
     el("stretch-say").textContent = step.say;
     el("stretch-progress-fill").style.width = "0%";
+    if (displayActive) {
+      await pushDisplaySnapshot({
+        type: "stretch", title: data.title, step_name: step.name, say: step.say,
+        progress_percent: Math.round((stepIndex / data.steps.length) * 100),
+      });
+    }
 
     const spoken = say(step.say);
     const paced = animateProgress(step.seconds * 1000);
@@ -1007,6 +1059,7 @@ async function runSyntheticMeditationTimer(data, meditationId) {
 }
 
 async function startMeditation(meditationId, preloaded) {
+  bringBackFromDisplay("meditation-display-banner", "meditation-detail");
   el("meditation-select").classList.add("hidden");
   el("meditation-session").classList.remove("hidden");
   el("meditation-result").classList.add("hidden");
@@ -1247,6 +1300,16 @@ function init() {
   el("stretch-next-btn").addEventListener("click", () => {
     if (skipStretchStep) skipStretchStep();
   });
+  el("stretch-to-tv-btn").addEventListener("click", () => sendToDisplay(
+    { type: "stretch", title: el("stretch-title").textContent, step_name: el("stretch-step-name").textContent, say: el("stretch-say").textContent, progress_percent: 0 },
+    "stretch-display-banner", "stretch-detail",
+  ));
+  el("stretch-bring-back-btn").addEventListener("click", () => bringBackFromDisplay("stretch-display-banner", "stretch-detail"));
+  el("meditation-to-tv-btn").addEventListener("click", () => sendToDisplay(
+    { type: "meditation", title: "Meditation", say: el("meditation-text").textContent },
+    "meditation-display-banner", "meditation-detail",
+  ));
+  el("meditation-bring-back-btn").addEventListener("click", () => bringBackFromDisplay("meditation-display-banner", "meditation-detail"));
 
   el("mic-btn").addEventListener("click", captureSpeech);
 

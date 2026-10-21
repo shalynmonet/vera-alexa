@@ -145,6 +145,28 @@ def test_games_and_activities_flow(tmp_path):
     asyncio.run(run())
 
 
+def test_display_handoff_flow(tmp_path):
+    async def run():
+        async with _server_session(tmp_path) as s:
+            await s.call_tool("set_profile", {"name": "Rose"})
+
+            empty = _data(await s.call_tool("get_display_session", {}))
+            assert empty == {"display": None, "session": None, "updated_at": None}
+
+            session = {"type": "stretch", "title": "Morning Chair Stretch", "step_name": "Neck tilts", "progress_percent": 25}
+            handed_off = _data(await s.call_tool("handoff_session_to_display", {"display": "tv", "session": session}))
+            assert handed_off == {"ok": True, "active": True}
+
+            current = _data(await s.call_tool("get_display_session", {}))
+            assert current["display"] == "tv" and current["session"] == session and current["updated_at"]
+
+            brought_back = _data(await s.call_tool("handoff_session_to_display", {}))
+            assert brought_back == {"ok": True, "active": False}
+            assert _data(await s.call_tool("get_display_session", {}))["session"] is None
+
+    asyncio.run(run())
+
+
 def test_memories_flow(tmp_path):
     async def run():
         async with _server_session(tmp_path) as s:

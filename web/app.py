@@ -9,13 +9,15 @@ Run (with the Vera MCP server already running on :8000), from the project root:
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from vera import cloud_storage
@@ -273,6 +275,39 @@ async def api_family_check_alerts(payload: dict, request: Request):
         await mcp_bridge.call_tool("mark_alert_sent", {"family_id": a["family_id"], "unplayed": a["unplayed"], "user_id": user_id})
         sent.append(a["family_id"])
     return {"sent": sent}
+
+
+# ---------- Simulated living room display ----------
+
+@app.get("/tv/{user_id}")
+async def tv_display_page(user_id: str):
+    """A big-screen, high-contrast 'Living Room Display' -- a SIMULATED
+    Fire TV, not a real device integration. Mirrors whatever session (if
+    any) has been handed off to it, via /api/display/events."""
+    return FileResponse(str(STATIC_DIR / "tv" / "display.html"))
+
+
+@app.get("/api/display/events/{user_id}")
+async def api_display_events(user_id: str):
+    """Server-sent events so the TV display (and the main screen's 'Now
+    playing on Living Room TV' banner) update the moment a session is
+    handed off or brought back, instead of a client polling loop."""
+    async def events():
+        last_payload = None
+        while True:
+            try:
+                state = await mcp_bridge.call_tool("get_display_session", {"user_id": user_id})
+            except mcp_bridge.ToolError:
+                state = {"display": None, "session": None, "updated_at": None}
+            payload = json.dumps(state)
+            if payload != last_payload:
+                yield f"data: {payload}\n\n"
+                last_payload = payload
+            else:
+                yield ": keep-alive\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
 # Mounted before the catch-all "/" static mount below so cached audio and

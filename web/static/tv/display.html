@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Living Room Display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/tv.css" />
+</head>
+<body>
+<div id="tv-screen">
+
+  <div id="tv-idle">
+    <div id="tv-vera"><img src="/img/vera-idle.webp" alt="Vera" /></div>
+    <h1>Living Room Display</h1>
+    <p id="tv-idle-text">Waiting for a session from the main screen…</p>
+  </div>
+
+  <div id="tv-session" class="hidden">
+    <div id="tv-vera-small"><img src="/img/vera-idle.webp" alt="Vera" /></div>
+    <h1 id="tv-title"></h1>
+    <h2 id="tv-step"></h2>
+    <p id="tv-say"></p>
+    <div id="tv-progress-track" class="hidden"><div id="tv-progress-fill"></div></div>
+  </div>
+
+  <div id="tv-cheer-overlay" class="hidden">
+    <h2 id="tv-cheer-from"></h2>
+    <img id="tv-cheer-photo" class="hidden" alt="" />
+    <video id="tv-cheer-video" class="hidden" autoplay playsinline></video>
+    <audio id="tv-cheer-audio" class="hidden" autoplay></audio>
+  </div>
+
+  <footer id="tv-footer">Simulated Fire TV display -- not a real device integration</footer>
+
+</div>
+<script type="module" src="/js/tv.js"></script>
+</body>
+</html>
