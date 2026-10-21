@@ -28,10 +28,17 @@ mcp = FastMCP(
         "Vera is a warm wellness companion for older adults. Speak slowly, kindly, "
         "and in short sentences. Never shame missed days. Offer games (memory, "
         "matching pairs, finish the saying, word categories), exercise routines, "
-        "or meditations -- call list_sessions to see what's available. After a "
-        "completed guided session, call log_completion; for anything else the "
-        "person did on their own (a walk, a bike ride, gardening, dancing, "
-        "swimming, or any other activity), call log_activity instead. Celebrate "
+        "or meditations -- call list_sessions to see what's available. Only log "
+        "an activity as done when the person says they've already finished it "
+        "(clear past tense) -- a future or conditional statement ('I will', "
+        "'I'm going to', 'that sounds good') is a plan, not a completion: call "
+        "plan_activity instead and encourage them, never log_completion or "
+        "log_activity for it. When you do call either, pass completed and "
+        "user_statement honestly -- the call is refused if they don't hold up, "
+        "which means ask or encourage rather than retry. After a completed "
+        "guided session, call log_completion; for anything else the person did "
+        "on their own (a walk, a bike ride, gardening, dancing, swimming, or "
+        "any other activity), call log_activity instead. Celebrate "
         "any new milestones a tool call returns. Save meaningful personal "
         "details (family, hobbies, upcoming events) with remember_fact so they "
         "can come up again naturally -- never health details. Family members "
@@ -53,7 +60,16 @@ store = Store()
 
 
 def _today(on_date: str | None) -> date:
-    return date.fromisoformat(on_date) if on_date else date.today()
+    """on_date is meant to be an ISO date for demos/tests to pin a fixed
+    day; Nova occasionally passes something else ('today') by analogy with
+    a free-text field elsewhere in the same call, so a bad value falls
+    back to the real today instead of crashing the whole tool call."""
+    if not on_date:
+        return date.today()
+    try:
+        return date.fromisoformat(on_date)
+    except ValueError:
+        return date.today()
 
 
 def _log(user: dict, activity_type: str, minutes: float, day: date, details: dict | None = None) -> list[dict]:
@@ -84,6 +100,49 @@ def _unlock_cheers(user: dict, newly_earned_ids: set[str], logged_activity_type:
 def _slugify_activity(name: str) -> str:
     key = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
     return key or "activity"
+
+
+# Stated intent ("I'll walk later") must never be logged as a completed
+# activity -- this is the server-side half of that guard (the other half is
+# the system prompt telling Nova to pass these honestly). Only engages when
+# user_statement is given, i.e. only on Nova's conversational path: UI
+# buttons and a session's own "ended"/"I'm done" event never pass one,
+# since the tap or the event itself already is the completion signal.
+_FUTURE_INTENT_RE = re.compile(
+    r"\b(will|gonna|going to|plan(?:ning)? to|later|tomorrow|tonight|maybe|perhaps|"
+    r"i'll|might|thinking about|about to|hoping to|soon)\b|sounds (good|nice|great|lovely)",
+    re.IGNORECASE,
+)
+_CLEAR_COMPLETION_RE = re.compile(
+    r"\b(i(?:'ve| have)? ?(?:just )?(?:walked|rode|biked|swam|danced|gardened|did|"
+    r"finished|completed|went|done)|got back|finished my|completed my|did my)\b",
+    re.IGNORECASE,
+)
+
+
+def _completion_guard_error(completed: bool, user_statement: str | None, minutes: float | None = None) -> str | None:
+    """None if this is safe to log as a completed activity; otherwise an
+    error message explaining why not, meant for Nova to see as a tool
+    error and respond to (ask a clarifying question, offer encouragement,
+    or call plan_activity) instead of logging."""
+    if user_statement is None:
+        return None
+    if not completed:
+        return (
+            "This hasn't happened yet -- don't log it as completed. Encourage them warmly, "
+            "and call plan_activity so Vera can ask how it went later, instead of logging it now."
+        )
+    if minutes is not None and minutes <= 0:
+        return (
+            "No real duration was given (minutes was zero or missing) -- don't log a made-up "
+            "number. Ask the person directly how many minutes it was, and log it once they answer."
+        )
+    if _FUTURE_INTENT_RE.search(user_statement) and not _CLEAR_COMPLETION_RE.search(user_statement):
+        return (
+            "That reads as a plan for later, not something already finished -- don't log it. "
+            "Call plan_activity instead so Vera can ask about it later, and encourage them warmly now."
+        )
+    return None
 
 
 def _elapsed_seconds(started_at: str | None) -> float | None:
@@ -378,17 +437,36 @@ def start_meditation(meditation_id: str = "healing_affirmations", user_id: str =
     return {**m, "meditation_id": meditation_id, "say": m["intro"]}
 
 
+def _clear_matching_plan(user: dict, activity_key: str, day_iso: str) -> None:
+    user["planned_activities"] = [
+        p for p in user.get("planned_activities", [])
+        if not (p["activity"] == activity_key and p["planned_on"] == day_iso)
+    ]
+
+
 @mcp.tool()
-def log_completion(activity_type: str, minutes: float, user_id: str = "demo", session_id: str | None = None, on_date: str | None = None) -> dict:
+def log_completion(activity_type: str, minutes: float, completed: bool, user_statement: str, user_id: str = "demo", session_id: str | None = None, on_date: str | None = None) -> dict:
     """Record a finished guided stretch/exercise or meditation session.
     activity_type is 'stretch' or 'meditation'. For anything else the person
-    did on their own, use log_activity instead. Returns updated streak and
-    any new milestones to celebrate."""
+    did on their own, use log_activity instead. completed and user_statement
+    are for Nova's conversational path only (when the person describes
+    finishing this in their own words rather than tapping the screen's own
+    completion button/event): pass the person's exact words as
+    user_statement and whether they actually said they finished as
+    completed, so a merely-intended session ('I'll do my stretch later')
+    can't be logged as done -- the call is refused with a helpful error
+    otherwise. UI-driven calls don't need either to be meaningful; pass
+    completed=true and any short note. Returns updated streak and any new
+    milestones to celebrate."""
     if activity_type not in ("stretch", "meditation"):
         return {"error": "activity_type must be 'stretch' or 'meditation' (memory games log themselves; other activities use log_activity)."}
+    guard_error = _completion_guard_error(completed, user_statement, minutes)
+    if guard_error:
+        return {"error": guard_error}
     u = store.get_user(user_id)
     day = _today(on_date)
     new = _log(u, activity_type, minutes, day, {"session_id": session_id} if session_id else None)
+    _clear_matching_plan(u, activity_type, day.isoformat())
     store.save_user(u)
     s = progress.streaks(u["activities"], day)
     say = f"Well done, {u['name']}."
@@ -398,23 +476,73 @@ def log_completion(activity_type: str, minutes: float, user_id: str = "demo", se
 
 
 @mcp.tool()
-def log_activity(activity: str, minutes: float, user_id: str = "demo", feeling: str | None = None, on_date: str | None = None) -> dict:
+def log_activity(activity: str, minutes: float, completed: bool, user_statement: str, user_id: str = "demo", feeling: str | None = None, on_date: str | None = None) -> dict:
     """Log a self-reported activity that doesn't have its own guided session:
     a walk, a bike ride, a stationary bike ride, gardening, dancing,
     swimming, or any other activity by name (for example 'yoga'). Counts
     toward the streak, weekly goal, and milestones just like a stretch or
-    meditation. feeling is optional: 'happy', 'okay', or 'tired'."""
+    meditation. feeling is optional: 'happy', 'okay', or 'tired'. completed
+    and user_statement are for Nova's conversational path only: pass the
+    person's exact words as user_statement and whether they actually said
+    they'd finished as completed, so stated intent ('I'm going to walk
+    later') can't be logged as if it already happened -- the call is
+    refused with a helpful error otherwise. UI-driven calls (the Log an
+    Activity screen, a self-logged timer's 'I'm done') don't need either
+    to be meaningful; pass completed=true and any short note."""
     activity_key = _slugify_activity(activity)
+    guard_error = _completion_guard_error(completed, user_statement, minutes)
+    if guard_error:
+        return {"error": guard_error}
     u = store.get_user(user_id)
     day = _today(on_date)
     details = {"feeling": feeling} if feeling else None
     new = _log(u, activity_key, minutes, day, details)
+    _clear_matching_plan(u, activity_key, day.isoformat())
     store.save_user(u)
     s = progress.streaks(u["activities"], day)
     say = f"Nice work, {u['name']}! I've logged your {activity_key.replace('_', ' ')}."
     if new:
         say += " " + " ".join(m["celebration"] for m in new)
     return {"logged": True, "activity": activity_key, "streak": s, "new_milestones": new, "say": say}
+
+
+@mcp.tool()
+def plan_activity(activity: str, user_id: str = "demo", when: str | None = None, on_date: str | None = None) -> dict:
+    """Save that the person said they intend to do an activity -- not yet
+    completed, like 'I'm going to walk later' or 'maybe I'll meditate
+    tonight'. Replaces any existing plan for the same activity today.
+    Vera will ask about it on the next proactive greeting or later the
+    same day ('Did you get your walk in today?') instead of logging it
+    now. Never used to shame a plan that didn't happen -- it just quietly
+    stops being brought up once the day ends."""
+    activity_key = _slugify_activity(activity)
+    u = store.get_user(user_id)
+    day_iso = _today(on_date).isoformat()
+    u.setdefault("planned_activities", [])
+    u["planned_activities"] = [p for p in u["planned_activities"] if p["planned_on"] == day_iso]  # quietly drop stale plans
+    _clear_matching_plan(u, activity_key, day_iso)
+    plan = {
+        "id": family.new_id(),
+        "activity": activity_key,
+        "activity_label": activity.strip(),
+        "when": when,
+        "planned_on": day_iso,
+    }
+    u["planned_activities"].append(plan)
+    store.save_user(u)
+    return {"plan": plan}
+
+
+@mcp.tool()
+def get_planned_activities(user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Today's planned-but-not-yet-done activities (stated intent that
+    hasn't been logged), for the proactive greeting to naturally ask
+    about -- 'Did you get your walk in today?' Plans from a previous day
+    are never returned; they expire quietly rather than being raised as a
+    missed commitment."""
+    u = store.get_user(user_id)
+    day_iso = _today(on_date).isoformat()
+    return {"planned": [p for p in u.get("planned_activities", []) if p["planned_on"] == day_iso]}
 
 
 # ---------- Fitness log ----------

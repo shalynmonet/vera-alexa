@@ -35,6 +35,7 @@ def _empty_user(user_id: str, name: str | None = None) -> dict[str, Any]:
         "family": [],          # {"id", "name", "phone", "nickname", "relationship", "email", "email_opt_in", "onboarded", "low_queue_notified_at", "token"}
         "cheers": [],          # {"id", "family_id", "family_name", "cheer_type", "target", "media_type", "file", "photo_file", "storage", "duration_seconds", "recorded_on", "activities_at_recording", "status", "played_on"}
         "display_session": None,  # {"display", "session", "updated_at"} while a session is handed off to a simulated display (e.g. the Living Room TV); None otherwise
+        "planned_activities": [],  # {"id", "activity", "activity_label", "when", "planned_on"} -- stated intent, not yet logged
     }
 
 

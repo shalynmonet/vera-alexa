@@ -79,7 +79,7 @@ def test_games_and_activities_flow(tmp_path):
 
             st = _data(await s.call_tool("start_stretch_routine", {}))
             assert any(step.get("check_in") for step in st["steps"])
-            done = _data(await s.call_tool("log_completion", {"activity_type": "stretch", "minutes": 8}))
+            done = _data(await s.call_tool("log_completion", {"activity_type": "stretch", "minutes": 8, "completed": True, "user_statement": "done"}))
             assert done["streak"]["current"] == 1
 
             log = _data(await s.call_tool("get_fitness_log", {}))
@@ -105,10 +105,10 @@ def test_games_and_activities_flow(tmp_path):
             profiles = _data(await s.call_tool("list_profiles", {}))
             assert {p["user_id"] for p in profiles["profiles"]} == {"demo", "tom"}
 
-            walk = _data(await s.call_tool("log_activity", {"activity": "walk", "minutes": 20, "feeling": "happy"}))
+            walk = _data(await s.call_tool("log_activity", {"activity": "walk", "minutes": 20, "feeling": "happy", "completed": True, "user_statement": "I walked for 20 minutes"}))
             assert walk["activity"] == "walk"
             assert "first_walk" in {m["id"] for m in walk["new_milestones"]}
-            custom = _data(await s.call_tool("log_activity", {"activity": "Evening Yoga!", "minutes": 15}))
+            custom = _data(await s.call_tool("log_activity", {"activity": "Evening Yoga!", "minutes": 15, "completed": True, "user_statement": "I did evening yoga"}))
             assert custom["activity"] == "evening_yoga"
 
             match = _data(await s.call_tool("start_matching_game", {"difficulty": 3}))
@@ -149,6 +149,44 @@ def test_games_and_activities_flow(tmp_path):
             today_detail = _data(await s.call_tool("get_day_detail", {}))
             assert {a["type"] for a in today_detail["activities"]} >= {"memory_game", "walk"}
             assert "first_session" in {b["id"] for b in today_detail["badges"]}
+
+    asyncio.run(run())
+
+
+def test_activity_completion_guard_and_plans_flow(tmp_path):
+    async def run():
+        async with _server_session(tmp_path) as s:
+            await s.call_tool("set_profile", {"name": "Rose"})
+
+            # Stated intent is refused, not logged.
+            refused = _data(await s.call_tool("log_activity", {
+                "activity": "walk", "minutes": 20, "completed": True,
+                "user_statement": "I'm going to ride my bike later",
+            }))
+            assert "error" in refused
+            log = _data(await s.call_tool("get_fitness_log", {}))
+            assert log["totals"] == {}
+
+            # Nova plans it instead -- shows up for the greeting to ask about.
+            plan = _data(await s.call_tool("plan_activity", {"activity": "bike ride", "when": "later"}))["plan"]
+            assert plan["activity"] == "bike_ride" and plan["when"] == "later"
+            planned = _data(await s.call_tool("get_planned_activities", {}))["planned"]
+            assert [p["id"] for p in planned] == [plan["id"]]
+
+            # A second, explicit non-completion is refused the same way.
+            refused2 = _data(await s.call_tool("log_completion", {
+                "activity_type": "meditation", "minutes": 10, "completed": False,
+                "user_statement": "maybe I'll meditate tonight",
+            }))
+            assert "error" in refused2
+
+            # Once they actually say they finished, it logs and clears the plan.
+            done = _data(await s.call_tool("log_activity", {
+                "activity": "bike ride", "minutes": 25, "completed": True,
+                "user_statement": "I just got back from my bike ride, about 25 minutes",
+            }))
+            assert done["logged"] is True and done["activity"] == "bike_ride"
+            assert _data(await s.call_tool("get_planned_activities", {}))["planned"] == []
 
     asyncio.run(run())
 
@@ -259,7 +297,7 @@ def test_family_cheers_flow(tmp_path):
             locked = _data(await s.call_tool("list_cheers", {"status": "locked"}))["cheers"]
             assert {c["file"] for c in locked} == {"b.webm"}
 
-            await s.call_tool("log_activity", {"activity": "walk", "minutes": 10})
+            await s.call_tool("log_activity", {"activity": "walk", "minutes": 10, "completed": True, "user_statement": "I walked for 10 minutes"})
             unlocked_after = _data(await s.call_tool("list_cheers", {"status": "unlocked"}))["cheers"]
             assert {c["file"] for c in unlocked_after} == {"a.webm", "b.webm"}
 

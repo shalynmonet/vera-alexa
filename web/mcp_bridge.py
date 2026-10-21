@@ -35,11 +35,19 @@ def _unwrap(result: Any) -> Any:
 
 
 async def call_tool(name: str, arguments: dict[str, Any] | None = None) -> Any:
+    # _unwrap can raise ToolError for an app-level tool error (including a
+    # schema validation failure, like a missing required argument) -- that
+    # raise happens *after* both `async with` blocks below have exited
+    # cleanly, not while they're unwinding. Raising from inside them would
+    # let anyio's task group re-wrap a plain ToolError as an
+    # ExceptionGroup, which `except mcp_bridge.ToolError` in bedrock_chat.py
+    # then fails to catch, crashing the whole chat turn instead of letting
+    # Nova see the error and respond to it.
     async with streamable_http_client(VERA_MCP_URL) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(name, arguments or {})
-            return _unwrap(result)
+    return _unwrap(result)
 
 
 async def list_tools() -> list[dict[str, Any]]:

@@ -58,7 +58,8 @@ The included **web simulator** (`web/app.py`) exists so this could be built and 
 | `start_stretch_routine` | A guided exercise routine (chair stretch, seated strength, balance, gentle walking): real video if recorded, step by step narration either way |
 | `start_meditation` | A guided meditation: real audio/video if recorded, or an intro line and target length otherwise |
 | `log_completion` | Records a finished guided stretch/exercise or meditation session, returns streak and new milestones |
-| `log_activity` | Logs a self-reported activity with no guided session -- a walk, bike or stationary bike ride, gardening, dancing, swimming, or anything else by name -- toward the same streak, goal, and milestones |
+| `log_activity` | Logs a self-reported activity with no guided session -- a walk, bike or stationary bike ride, gardening, dancing, swimming, or anything else by name -- toward the same streak, goal, and milestones. Refuses to log stated intent as completed -- see "Only log what's actually done" below |
+| `plan_activity`, `get_planned_activities` | Remembers an activity the person said they intend to do but haven't yet ("I'll walk later") so the next greeting can naturally ask how it went, instead of logging a guess now |
 | `get_fitness_log` | Calendar grid (both a flat list and 5 Sunday-Saturday weeks), totals, streak, weekly goal, and badges deduplicated with a count (e.g. "Weekly Goal Met ×3") |
 | `get_day_detail` | Everything that happened on one day -- activities, game scores, cheers played, badges earned -- for tapping a square on the Progress calendar |
 | `get_streak` | Current and longest streak |
@@ -121,6 +122,36 @@ Beyond the guided sessions, three ways to log an unguided activity (walk, bike, 
 3. **Start a Walk / Start a Ride** (also on Exercise) -- a live stopwatch; Vera checks in every few minutes, and tapping "I'm Done" logs the elapsed time automatically.
 
 Every tool accepts an optional `on_date` (YYYY-MM-DD) so demos and tests can use a fixed date.
+
+### Only log what's actually done
+
+Saying "I'm going to walk today, that sounds good" must never get logged as
+a finished walk -- stated intent isn't a completed activity. `log_activity`
+and `log_completion` take two extra parameters, `completed` and
+`user_statement`, meant for Nova's conversational path only (UI buttons and
+a session's own "ended"/"I'm done" event don't need either to be
+meaningful, since the tap or the event itself already *is* the completion
+signal). When Nova calls either tool from a chat message, it passes the
+person's exact words and whether they said they'd actually finished;
+`server._completion_guard_error` refuses the call -- with a message telling
+Nova what to do instead -- when `completed` is false, the statement reads
+as a future plan ("will", "going to", "later", "sounds good") without a
+clear completion alongside it, or the minutes are zero/missing (so Nova
+can't log a made-up duration -- it has to ask). The system prompt tells
+Nova to respond to a refusal by asking a clarifying question, encouraging
+warmly, or calling `plan_activity` -- never by retrying the same call.
+
+`plan_activity` remembers a stated intent ("I'll ride my bike later")
+without logging anything; `get_planned_activities` feeds it back to the
+next proactive greeting ("Did you get your bike ride in today?") so Vera
+follows up naturally instead of letting it vanish. A plan is cleared the
+moment the matching activity is actually logged, and quietly expires at
+the end of the day either way -- a skipped plan is never raised as
+something missed.
+
+`check_activity_phrases.py` sends the phrases from this fix's bug report
+through the real Nova chat loop and reports what happened (logged,
+refused, planned, or asked) -- a living check against regressions.
 
 ### Family Cheers
 

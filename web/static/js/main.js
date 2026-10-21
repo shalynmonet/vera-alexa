@@ -371,10 +371,15 @@ async function handleBedrockToolCalls(toolCalls) {
         startMeditation(call.args.meditation_id, call.result);
         break;
       case "log_completion":
+        // call.result.error means the server guard refused it (stated
+        // intent, not a completion) -- Vera's spoken reply already
+        // explains why; there's nothing to render.
+        if (call.result.error) break;
         if (current === "stretch") await renderActivityCompletion(call.result, "stretch-result");
         else if (current === "meditation") await renderActivityCompletion(call.result, "meditation-result");
         break;
       case "log_activity":
+        if (call.result.error) break;
         showScreen("progress");
         await celebrate(call.result.new_milestones);
         break;
@@ -978,6 +983,8 @@ async function startStretch(preloaded, routineId = "morning_chair_stretch") {
       minutes: data.minutes,
       session_id: data.routine_id,
       user_id: currentUserId,
+      completed: true,
+      user_statement: "Completed via the app's own routine player.",
     });
   } catch {
     return;
@@ -1074,6 +1081,8 @@ async function finishMeditation(data, meditationId) {
       minutes: data.minutes,
       session_id: meditationId,
       user_id: currentUserId,
+      completed: true,
+      user_statement: "Completed via the app's own meditation player.",
     });
   } catch {
     return;
@@ -1205,6 +1214,8 @@ async function finishLogActivity(feeling) {
       minutes: logActivityState.minutes,
       feeling: logActivityState.feeling || undefined,
       user_id: currentUserId,
+      completed: true,
+      user_statement: "Logged via the app's Log an Activity screen.",
     });
   } catch {
     el("log-result").textContent = "Something went wrong logging that. Please try again.";
@@ -1255,7 +1266,10 @@ async function finishTimedActivity() {
   clearActiveTimers();
   let result;
   try {
-    result = await callTool("log_activity", { activity: timedActivityKind, minutes, user_id: currentUserId });
+    result = await callTool("log_activity", {
+      activity: timedActivityKind, minutes, user_id: currentUserId,
+      completed: true, user_statement: "Logged via the app's own timer -- \"I'm Done\" was tapped.",
+    });
   } catch {
     return;
   }
