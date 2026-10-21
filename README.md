@@ -241,8 +241,7 @@ aws s3 sync web/static/media s3://your-bucket-name/media
 |---|---|
 | **Bedrock** (Amazon Nova Lite) | Powers the web simulator's conversational tool-use loop -- free-form chat, the proactive greeting, and deciding which MCP tool to call. On real Alexa+, this role is played by Alexa+'s own model; Vera's MCP tools don't change. |
 | **Polly** | Text to speech for the web simulator's voice (neural engine, a slightly slower SSML rate for older ears), with disk caching. Alexa+ handles this natively in production. |
-| **S3** | Optional storage for exercise/meditation videos and Family Cheers recordings, served back out via presigned URLs so the bucket can stay private. Required (not just nice to have) once the MCP server runs somewhere its local disk doesn't persist, like App Runner. |
-| **App Runner** | Hosts the MCP server itself (`server.py`) with a public HTTPS endpoint, built straight from this GitHub repo -- see [Deploying to AWS App Runner](#deploying-the-mcp-server-to-aws-app-runner). |
+| **S3** | Optional storage for exercise/meditation videos and Family Cheers recordings, served back out via presigned URLs so the bucket can stay private. Required (not just nice to have) once the MCP server runs somewhere its local disk doesn't persist -- see Deployment below. |
 | **SES** | Optional: lets the caregiver dashboard email a family member their cheer-recording nudge directly, instead of only copying the link. Sandbox mode by default (sender and every recipient must be verified). |
 | **End User Messaging SMS** | Optional, off by default (`VERA_SMS_ENABLED`): automatic SMS nudges once a toll-free number is registered. The family invite itself never needs this -- it's a plain `sms:` link the caregiver's own phone sends. |
 
@@ -292,40 +291,13 @@ Includes an end to end test that starts the server and calls every core tool thr
 | `VERA_SMS_ORIGINATION_NUMBER` | *(none)* | Your registered toll-free number; required once `VERA_SMS_ENABLED=true` |
 | `AWS_REGION` | `us-east-1` | Region for S3/SMS (and Bedrock/Polly/SES, in the web simulator) |
 
-## Deploying the MCP server to AWS App Runner
+## Deployment
 
-The MCP server (`server.py`) is what Alexa+ -- or anything else speaking MCP -- actually talks to, so it's the piece that needs a public HTTPS endpoint. The web simulator stays local (or wherever you run it), pointed at that endpoint via `VERA_MCP_URL`.
+For this submission, the MCP server (`server.py`) runs locally, the same `python server.py` from Run it above, alongside the web simulator on the same machine. AWS App Runner was the original plan for giving it a public HTTPS endpoint, but App Runner is currently closed to new customers, so that path isn't available right now.
 
-This repo includes an `apprunner.yaml` so App Runner can build and run it with no Dockerfile:
+**Planned deployment path: Amazon ECS Express Mode.** Once available, this would containerize `server.py` (a small Dockerfile around the existing `pip install -r requirements.txt` + `python server.py`) and deploy it to ECS using Express Mode's simplified setup -- a public HTTPS endpoint without hand-writing a task definition or provisioning a cluster/VPC from scratch. The same `VERA_HOST=0.0.0.0` and `VERA_PORT` env vars would carry over unchanged; `VERA_MCP_URL` on the web simulator would just point at whatever endpoint ECS Express Mode hands back.
 
-```yaml
-version: 1.0
-runtime: python311
-build:
-  commands:
-    build:
-      - pip install -r requirements.txt
-run:
-  command: python server.py
-  network:
-    port: 8000
-  env:
-    - name: VERA_HOST
-      value: "0.0.0.0"
-```
-
-Steps (AWS Console):
-
-1. Push this repo to GitHub.
-2. **App Runner > Create service > Source code repository**, connect your GitHub account, pick this repo and branch.
-3. Deployment trigger: **Automatic** deploys a new version on every push to the branch.
-4. Build settings: choose **Use a configuration file** (it'll find `apprunner.yaml`), or configure manually -- runtime Python 3, build command `pip install -r requirements.txt`, start command `python server.py`, port `8000`.
-5. Add any environment variables you need beyond the ones in `apprunner.yaml`: `VERA_CORS_ORIGINS` (lock this down to your web simulator's origin instead of `*` once you have one), and, if you want S3-backed media/cheers, `VERA_S3_BUCKET` / `VERA_S3_PREFIX` / `AWS_REGION`.
-6. If you're using S3, attach an instance role granting `s3:GetObject` and `s3:HeadObject` on that bucket -- that's all the deployed server needs, since it only ever reads (uploading cheer recordings happens from wherever the web simulator runs, not from App Runner).
-7. Create the service. App Runner builds, deploys, and gives you a public `https://<random-id>.<region>.awsapprunner.com` URL -- the MCP endpoint is that URL plus `/mcp`.
-8. Point anything that should talk to it (the web simulator, MCP Inspector) at `VERA_MCP_URL=https://<your-service>.awsapprunner.com/mcp`.
-
-**Known limitation:** `data/vera.json` is a local JSON file, which is fine for a single always-on App Runner instance but won't survive a redeploy, and won't be shared if you scale past one instance. `vera/storage.py`'s `Store` class is a narrow, three-method interface (`get_user`/`save_user`/`list_users`/...) specifically so swapping it for DynamoDB later wouldn't touch any tool's logic -- just not done here, to keep this a one-file, zero-infrastructure demo.
+**Known limitation either way:** `data/vera.json` is a local JSON file, which is fine for a single always-on instance but won't survive a redeploy, and won't be shared if you scale past one instance. `vera/storage.py`'s `Store` class is a narrow, three-method interface (`get_user`/`save_user`/`list_users`/...) specifically so swapping it for DynamoDB later wouldn't touch any tool's logic -- just not done here, to keep this a one-file, zero-infrastructure demo.
 
 ## Web simulator
 
@@ -374,7 +346,7 @@ python -m web.app   # http://127.0.0.1:8080
 ```
 
 Configuration (env vars): `VERA_MCP_URL` (default `http://127.0.0.1:8000/mcp`;
-point this at your App Runner URL's `/mcp` once it's deployed),
+point this at wherever the MCP server ends up deployed, once it is),
 `WEB_HOST` / `WEB_PORT` (default `127.0.0.1:8080`), `VERA_BEDROCK_MODEL_ID`
 (default `us.amazon.nova-lite-v1:0`), `VERA_POLLY_VOICE` (default `Ruth`),
 `VERA_POLLY_ENGINE` (default `neural`), `VERA_POLLY_RATE` (default `92%`),
@@ -397,7 +369,8 @@ Kept in [FRICTION_LOG.md](FRICTION_LOG.md), using the hackathon's own entry temp
 - Ring integration for gentle, activity-aware check-ins -- only with the resident's consent, and never framed as surveillance
 - Voice-based cognitive screening, developed together with clinicians rather than inferred from game scores alone
 - Automatic SMS nudges once a toll-free number is registered (the code already exists behind `VERA_SMS_ENABLED`; see Family Cheers)
-- Move `data/vera.json` to DynamoDB so the App Runner deployment survives a redeploy and can scale past one instance
+- Deploy the MCP server via Amazon ECS Express Mode (App Runner's replacement here, since it's closed to new customers) for a public HTTPS endpoint
+- Move `data/vera.json` to DynamoDB so that deployment survives a redeploy and can scale past one instance
 
 ## License
 
