@@ -13,7 +13,7 @@ from datetime import date
 from mcp.server.fastmcp import FastMCP
 
 from vera import memory_game, progress
-from vera.content import MEDITATIONS, STRETCH_ROUTINES
+from vera.content import GAMES, MEDITATIONS, STRETCH_ROUTINES
 from vera.storage import Store
 
 HOST = os.environ.get("VERA_HOST", "127.0.0.1")
@@ -64,6 +64,25 @@ def set_profile(user_id: str = "demo", name: str | None = None, weekly_goal_days
     return get_profile(user_id)
 
 
+@mcp.tool()
+def list_profiles() -> dict:
+    """List everyone who has a profile on this Vera, for the start screen's
+    profile picker ('Continue as Rose', 'Add a person')."""
+    return {"profiles": store.list_users()}
+
+
+@mcp.tool()
+def create_profile(name: str, weekly_goal_days: int = 4) -> dict:
+    """Create a new person's profile ('Add a person' on the start screen) and
+    return it, including the new user_id to use for every tool call after."""
+    user_id = store.new_user_id(name)
+    u = store.get_user(user_id)
+    u["name"] = name
+    u["weekly_goal_days"] = max(1, min(7, weekly_goal_days))
+    store.save_user(u)
+    return {"user_id": user_id, "name": u["name"], "weekly_goal_days": u["weekly_goal_days"]}
+
+
 # ---------- Memory game ----------
 
 @mcp.tool()
@@ -104,8 +123,9 @@ def submit_memory_answer(answer: str, user_id: str = "demo", on_date: str | None
 
 @mcp.tool()
 def list_sessions() -> dict:
-    """List the available chair stretch routines and meditations."""
+    """List the available games, chair stretch routines, and meditations."""
     return {
+        "games": [{"id": k, "title": v["title"], "description": v["description"]} for k, v in GAMES.items()],
         "stretch_routines": [{"id": k, "title": v["title"], "minutes": v["minutes"]} for k, v in STRETCH_ROUTINES.items()],
         "meditations": [{"id": k, "title": v["title"], "minutes": v["minutes"]} for k, v in MEDITATIONS.items()],
     }

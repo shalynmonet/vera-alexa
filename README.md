@@ -11,9 +11,10 @@ Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the o
 | Tool | What it does |
 |---|---|
 | `get_profile`, `set_profile` | Preferred name and weekly goal |
+| `list_profiles`, `create_profile` | Everyone sharing this Vera, for the start screen's profile picker |
 | `start_memory_game` | Picks 3 to 6 familiar words for Vera to read aloud |
 | `submit_memory_answer` | Scores the spoken answer (forgiving of order and mishearings), adapts difficulty, logs the game |
-| `list_sessions` | Available stretch routines and meditations |
+| `list_sessions` | Available games, stretch routines, and meditations |
 | `start_stretch_routine` | Seated stretch video plus step by step narration with a halfway check in |
 | `start_meditation` | 3 min, 10 min, or bedtime meditation |
 | `log_completion` | Records a finished stretch or meditation, returns streak and new milestones |
@@ -65,14 +66,32 @@ Includes an end to end test that starts the server and calls every core tool thr
 | `VERA_DATA` | `data/vera.json` | JSON store |
 | `VERA_CORS_ORIGINS` | `*` | Lock down for production |
 
-## Web simulator (Day 2)
+## Web simulator
 
-An Echo Show style Alexa+ simulator in the browser: big text, high contrast,
+An Echo Show style Alexa+ simulator in the browser, matching the look of the
+[Vera Cares](https://vera-cares.lovable.app/) site: big text, high contrast,
 large buttons, voice in/out via the Web Speech API with a type-to-talk
 fallback, and a natural chat layer (AWS Bedrock, Amazon Nova Lite via the
 Converse API) that calls Vera's MCP tools through tool use. If Bedrock isn't
 reachable or configured, the simulator falls back to simple keyword routing
 so it keeps working.
+
+A start screen lets each person in the household pick their own profile
+("Continue as Rose" / "Add a person"), so progress is kept separately per
+person. From there, home has four sections -- Games, Exercise, Meditations,
+Progress -- each backed by its own MCP tool(s) so new games or routines show
+up automatically.
+
+Vera herself is a persistent on-screen companion (a purple elephant) built
+from `web/static/js/companion.js`: large and centered on the start/home
+screens with a speech bubble for her words, a small corner companion on
+activity screens, shrinking and dimming during a video or meditation
+session, and animating to center stage to celebrate a new milestone. Each
+section has its own idle pose (thinking for Games, exercising for Exercise,
+meditating for Meditations, celebrating for Progress), with a gentle idle
+bob and talk/celebrate bounce that respects `prefers-reduced-motion`. Poses
+are plain images today; the module is structured so any pose can later
+become a looping video without touching call sites.
 
 ```powershell
 # with the Vera MCP server already running (see above)

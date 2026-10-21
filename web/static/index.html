@@ -4,6 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Vera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -11,36 +14,58 @@
 
   <header id="topbar">
     <button id="home-btn" aria-label="Go home">🏠</button>
-    <div id="greeting-small">Vera</div>
+    <a id="brand-link" href="https://vera-cares.lovable.app/" target="_blank" rel="noopener">Part of Vera Cares ↗</a>
     <div id="clock"></div>
   </header>
 
   <main id="screen-root">
 
-    <section id="screen-home" class="screen">
+    <section id="screen-start" class="screen">
+      <div class="vera-slot" id="vera-slot-start" data-size="large"></div>
+      <h1 class="screen-title">Who's joining Vera?</h1>
+      <div id="profile-list" class="tiles small"></div>
+      <div id="add-profile-row">
+        <button id="add-profile-btn" class="secondary-btn">+ Add a person</button>
+        <div id="add-profile-form" class="hidden">
+          <input id="add-profile-name" type="text" placeholder="Their name" autocomplete="off" />
+          <button id="add-profile-save" class="primary-btn">Create profile</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-home" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-home" data-size="large"></div>
       <h1 id="home-greeting">Hello</h1>
       <p id="home-sub">Let's see what Vera has for you today.</p>
+      <button id="switch-profile-btn" class="link-btn">Not you? Switch person</button>
       <div class="tiles">
-        <button class="tile" data-intent="memory">
+        <button class="tile" data-intent="games">
           <span class="tile-icon">🧠</span>
-          <span class="tile-label">Memory Game</span>
+          <span class="tile-label">Games</span>
         </button>
-        <button class="tile" data-intent="stretch">
+        <button class="tile" data-intent="exercise">
           <span class="tile-icon">🪑</span>
-          <span class="tile-label">Chair Stretch</span>
+          <span class="tile-label">Exercise</span>
         </button>
         <button class="tile" data-intent="meditation">
           <span class="tile-icon">🧘</span>
-          <span class="tile-label">Meditation</span>
+          <span class="tile-label">Meditations</span>
         </button>
         <button class="tile" data-intent="progress">
           <span class="tile-icon">📅</span>
-          <span class="tile-label">My Progress</span>
+          <span class="tile-label">Progress</span>
         </button>
       </div>
     </section>
 
+    <section id="screen-games" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-games" data-size="corner"></div>
+      <h1 class="screen-title">Games</h1>
+      <div id="games-list" class="tiles small"></div>
+    </section>
+
     <section id="screen-memory" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-memory" data-size="corner"></div>
       <h1 class="screen-title">Memory Game</h1>
       <div id="memory-prompt" class="big-text"></div>
       <div id="memory-words" class="words-display hidden"></div>
@@ -51,8 +76,15 @@
       </div>
     </section>
 
+    <section id="screen-exercise" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-exercise" data-size="corner"></div>
+      <h1 class="screen-title">Exercise</h1>
+      <div id="exercise-list" class="tiles small"></div>
+    </section>
+
     <section id="screen-stretch" class="screen hidden">
-      <h1 class="screen-title">Chair Stretch</h1>
+      <div class="vera-slot" id="vera-slot-stretch" data-size="corner"></div>
+      <h1 class="screen-title" id="stretch-title">Chair Stretch</h1>
       <div id="stretch-video" class="video-box">🪑</div>
       <div id="stretch-step-name" class="big-text"></div>
       <div id="stretch-say" class="say-text"></div>
@@ -65,6 +97,7 @@
     </section>
 
     <section id="screen-meditation" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-meditation" data-size="corner"></div>
       <h1 class="screen-title">Meditation</h1>
       <div id="meditation-select" class="tiles small">
         <button class="tile" data-med="short_calm">
@@ -88,6 +121,7 @@
     </section>
 
     <section id="screen-progress" class="screen hidden">
+      <div class="vera-slot" id="vera-slot-progress" data-size="corner"></div>
       <h1 class="screen-title">My Progress</h1>
       <div id="progress-streak" class="big-text"></div>
       <div id="progress-week" class="say-text"></div>
@@ -97,8 +131,6 @@
     </section>
 
   </main>
-
-  <div id="caption" class="hidden"></div>
 
   <footer id="bottombar">
     <div id="type-row" class="hidden">
@@ -112,7 +144,17 @@
     <div id="mic-hint">Tap the microphone and talk to Vera</div>
   </footer>
 
-  <div id="celebration" class="hidden"></div>
+  <div id="celebration" class="hidden">
+    <div class="vera-slot" id="vera-slot-celebrate" data-size="celebrate"></div>
+    <h2 id="celebrate-title"></h2>
+  </div>
+
+  <div id="vera-companion" class="vera-companion">
+    <div class="vera-figure">
+      <img id="vera-img" src="/img/vera-idle.webp" alt="Vera" />
+    </div>
+    <div id="vera-bubble" class="vera-bubble hidden"></div>
+  </div>
 
 </div>
 <script type="module" src="/js/main.js"></script>

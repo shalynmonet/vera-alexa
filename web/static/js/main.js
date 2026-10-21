@@ -1,16 +1,17 @@
 import { callTool, chat } from "./api.js";
 import { speak, listen, speechRecognitionSupported } from "./speech.js";
+import { Companion } from "./companion.js";
 
-const USER_ID = "demo";
-const SCREENS = ["home", "memory", "stretch", "meditation", "progress"];
+const SCREENS = ["start", "home", "games", "memory", "exercise", "stretch", "meditation", "progress"];
 const MAX_HISTORY = 20;
 let conversationHistory = [];
+let currentUserId = null;
 
 const el = (id) => document.getElementById(id);
 
-// ---------- shared chrome: screen router, captions, mic, celebrations ----------
+// ---------- shared chrome: screen router, companion speech, celebrations ----------
 
-let current = "home";
+let current = "start";
 let activeTimers = [];     // interval/timeout ids to clear on screen change
 let micListening = false;
 
@@ -29,44 +30,46 @@ function clearActiveTimers() {
 
 function showScreen(name) {
   clearActiveTimers();
+  Companion.setVideoMode(false);
   SCREENS.forEach((s) => el(`screen-${s}`).classList.toggle("hidden", s !== name));
   current = name;
-  setCaption("");
+  Companion.placeInScreen(name);
+  if (name === "start") renderStart();
   if (name === "home") renderHome();
-  if (name === "progress") renderProgress();
-}
-
-function setCaption(text) {
-  const c = el("caption");
-  if (!text) {
-    c.classList.add("hidden");
-    c.textContent = "";
-    return;
+  if (name === "games") renderGamesList();
+  if (name === "exercise") renderExerciseList();
+  if (name === "meditation") {
+    el("meditation-select").classList.remove("hidden");
+    el("meditation-session").classList.add("hidden");
   }
-  c.textContent = text;
-  c.classList.remove("hidden");
+  if (name === "progress") renderProgress();
 }
 
 async function say(text) {
   if (!text) return;
-  setCaption(text);
   const mic = el("mic-btn");
-  await speak(text, {
+  await Companion.say(text, (t) => speak(t, {
     onStart: () => mic.classList.add("speaking"),
     onEnd: () => mic.classList.remove("speaking"),
-  });
+  }));
 }
 
 async function celebrate(milestones) {
   if (!milestones || !milestones.length) return;
   const overlay = el("celebration");
+  const titleEl = el("celebrate-title");
+  overlay.classList.remove("hidden");
   for (const m of milestones) {
-    overlay.innerHTML = `<div class="celebrate-card">🎉<h2>${escapeHtml(m.title)}</h2></div>`;
-    overlay.classList.remove("hidden");
-    await say(m.celebration || `Congratulations, you earned ${m.title}!`);
-    await sleep(1000);
+    titleEl.textContent = m.title;
+    const mic = el("mic-btn");
+    await Companion.celebrate(m.celebration || `Congratulations, you earned ${m.title}!`, (t) => speak(t, {
+      onStart: () => mic.classList.add("speaking"),
+      onEnd: () => mic.classList.remove("speaking"),
+    }));
+    await sleep(800);
   }
   overlay.classList.add("hidden");
+  titleEl.textContent = "";
 }
 
 function escapeHtml(s) {
@@ -90,6 +93,37 @@ function tickClock() {
   el("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// ---------- profiles (start screen) ----------
+
+async function renderStart() {
+  const list = el("profile-list");
+  list.innerHTML = `<div class="say-text">Loading…</div>`;
+  let profiles;
+  try {
+    const res = await callTool("list_profiles", {});
+    profiles = res.profiles;
+  } catch {
+    list.innerHTML = `<div class="say-text">Couldn't reach Vera's server. Is it running?</div>`;
+    return;
+  }
+  list.innerHTML = profiles.map((p) => `
+    <button class="tile profile-tile" data-user-id="${escapeHtml(p.user_id)}">
+      <span class="tile-icon">👤</span>
+      <span class="tile-label">Continue as ${escapeHtml(p.name)}</span>
+    </button>
+  `).join("");
+  list.querySelectorAll(".profile-tile").forEach((btn) => {
+    btn.addEventListener("click", () => selectProfile(btn.dataset.userId));
+  });
+  await say("Hi there! Who's joining me today?");
+}
+
+function selectProfile(userId) {
+  currentUserId = userId;
+  conversationHistory = [];
+  showScreen("home");
+}
+
 // ---------- context-aware input: who gets the next thing the user says ----------
 
 let pendingAnswer = null; // function(text) | null
@@ -105,7 +139,7 @@ async function routeUtterance(text) {
   }
 
   try {
-    const result = await chat(text, conversationHistory, USER_ID);
+    const result = await chat(text, conversationHistory, currentUserId);
     conversationHistory = (result.history || conversationHistory).slice(-MAX_HISTORY);
     if (result.reply) await say(result.reply);
     await handleBedrockToolCalls(result.tool_calls || []);
@@ -122,7 +156,7 @@ async function routeUtterance(text) {
   if (intent === "stretch") { showScreen("stretch"); startStretch(); return; }
   if (intent === "meditation") { showScreen("meditation"); return; }
   if (intent === "progress") { showScreen("progress"); return; }
-  setCaption(`I heard "${text}". Try saying memory game, chair stretch, meditation, or my progress.`);
+  await say(`I heard "${text}". Try saying memory game, chair stretch, meditation, or my progress.`);
 }
 
 // Dispatch tool calls Bedrock made during a chat turn to the matching
@@ -181,13 +215,15 @@ async function captureSpeech() {
   micListening = true;
   const mic = el("mic-btn");
   mic.classList.add("listening");
+  Companion.setListening(true);
   const text = await listen();
   mic.classList.remove("listening");
+  Companion.setListening(false);
   micListening = false;
   if (text) {
     routeUtterance(text);
   } else {
-    setCaption("I didn't quite catch that. Try again, or type instead.");
+    await say("I didn't quite catch that. Try again, or type instead.");
   }
 }
 
@@ -197,16 +233,46 @@ async function renderHome() {
   el("home-greeting").textContent = `${greetingWord()}`;
   el("home-sub").textContent = "Let's see what Vera has for you today.";
   try {
-    const profile = await callTool("get_profile", { user_id: USER_ID });
-    const log = await callTool("get_fitness_log", { user_id: USER_ID, days: 7 });
+    const profile = await callTool("get_profile", { user_id: currentUserId });
+    const log = await callTool("get_fitness_log", { user_id: currentUserId, days: 7 });
     el("home-greeting").textContent = `${greetingWord()}, ${profile.name}`;
     const streak = log.streak.current;
     el("home-sub").textContent = streak > 0
       ? `You're on a ${streak} day streak. Keep it up!`
       : "Let's do something nice today.";
+    await say(streak > 0
+      ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
+      : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
   } catch {
     el("home-sub").textContent = "Couldn't reach Vera's server. Is it running?";
   }
+}
+
+// ---------- games ----------
+
+async function renderGamesList() {
+  const list = el("games-list");
+  list.innerHTML = `<div class="say-text">Loading…</div>`;
+  let data;
+  try {
+    data = await callTool("list_sessions", {});
+  } catch {
+    list.innerHTML = `<div class="say-text">Couldn't reach Vera's server.</div>`;
+    return;
+  }
+  list.innerHTML = data.games.map((g) => `
+    <button class="tile" data-game-id="${escapeHtml(g.id)}">
+      <span class="tile-icon">🧠</span>
+      <span class="tile-label">${escapeHtml(g.title)}</span>
+      <span class="tile-desc">${escapeHtml(g.description || "")}</span>
+    </button>
+  `).join("");
+  list.querySelectorAll(".tile[data-game-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      showScreen("memory");
+      startMemoryGame();
+    });
+  });
 }
 
 // ---------- memory game ----------
@@ -220,7 +286,7 @@ async function startMemoryGame(preloaded) {
   let data = preloaded;
   if (!data) {
     try {
-      data = await callTool("start_memory_game", { user_id: USER_ID });
+      data = await callTool("start_memory_game", { user_id: currentUserId });
     } catch (e) {
       el("memory-prompt").textContent = "Couldn't start the game. Is the Vera server running?";
       return;
@@ -252,12 +318,39 @@ async function submitMemoryAnswer(answer) {
   el("memory-prompt").textContent = "Let's see how you did…";
   let result;
   try {
-    result = await callTool("submit_memory_answer", { answer, user_id: USER_ID });
+    result = await callTool("submit_memory_answer", { answer, user_id: currentUserId });
   } catch {
     el("memory-prompt").textContent = "Something went wrong scoring that. Let's try again.";
     return;
   }
   await renderMemoryResult(result);
+}
+
+// ---------- exercise ----------
+
+async function renderExerciseList() {
+  const list = el("exercise-list");
+  list.innerHTML = `<div class="say-text">Loading…</div>`;
+  let data;
+  try {
+    data = await callTool("list_sessions", {});
+  } catch {
+    list.innerHTML = `<div class="say-text">Couldn't reach Vera's server.</div>`;
+    return;
+  }
+  list.innerHTML = data.stretch_routines.map((r) => `
+    <button class="tile" data-routine-id="${escapeHtml(r.id)}">
+      <span class="tile-icon">🪑</span>
+      <span class="tile-label">${escapeHtml(r.title)}</span>
+      <span class="tile-desc">${r.minutes} minutes</span>
+    </button>
+  `).join("");
+  list.querySelectorAll(".tile[data-routine-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      showScreen("stretch");
+      startStretch(undefined, btn.dataset.routineId);
+    });
+  });
 }
 
 // ---------- chair stretch ----------
@@ -269,7 +362,7 @@ async function renderActivityCompletion(result, resultElId) {
   await celebrate(result.new_milestones);
 }
 
-async function startStretch(preloaded) {
+async function startStretch(preloaded, routineId = "morning_chair_stretch") {
   el("stretch-result").classList.add("hidden");
   el("stretch-step-name").textContent = "Getting ready…";
   el("stretch-say").textContent = "";
@@ -279,13 +372,15 @@ async function startStretch(preloaded) {
   let data = preloaded;
   if (!data) {
     try {
-      data = await callTool("start_stretch_routine", { user_id: USER_ID });
+      data = await callTool("start_stretch_routine", { routine_id: routineId, user_id: currentUserId });
     } catch {
       el("stretch-step-name").textContent = "Couldn't start the stretch. Is the Vera server running?";
       return;
     }
   }
+  el("stretch-title").textContent = data.title || "Chair Stretch";
   await say(data.say);
+  Companion.setVideoMode(true);
   for (const step of data.steps) {
     if (current !== "stretch") return;
     el("stretch-step-name").textContent = step.name;
@@ -311,6 +406,7 @@ async function startStretch(preloaded) {
     skipStretchStep = null;
     speechSynthesis.cancel();
   }
+  Companion.setVideoMode(false);
   if (current !== "stretch") return;
   el("stretch-step-name").textContent = "All done!";
   el("stretch-say").textContent = "";
@@ -323,7 +419,7 @@ async function startStretch(preloaded) {
       activity_type: "stretch",
       minutes: data.minutes,
       session_id: data.routine_id,
-      user_id: USER_ID,
+      user_id: currentUserId,
     });
   } catch {
     return;
@@ -369,7 +465,7 @@ async function startMeditation(meditationId, preloaded) {
   let data = preloaded;
   if (!data) {
     try {
-      data = await callTool("start_meditation", { meditation_id: meditationId, user_id: USER_ID });
+      data = await callTool("start_meditation", { meditation_id: meditationId, user_id: currentUserId });
     } catch {
       el("meditation-text").textContent = "Couldn't start meditation. Is the Vera server running?";
       return;
@@ -385,6 +481,7 @@ async function startMeditation(meditationId, preloaded) {
     el("meditation-circle").textContent = `${m}:${String(s).padStart(2, "0")}`;
   };
   render();
+  Companion.setVideoMode(true);
 
   await new Promise((resolve) => {
     const finish = () => { clearInterval(id); resolve(); };
@@ -395,6 +492,7 @@ async function startMeditation(meditationId, preloaded) {
       if (remaining <= 0) finish();
     }, 1000));
   });
+  Companion.setVideoMode(false);
   if (current !== "meditation") return;
 
   let result;
@@ -403,7 +501,7 @@ async function startMeditation(meditationId, preloaded) {
       activity_type: "meditation",
       minutes: data.minutes,
       session_id: meditationId,
-      user_id: USER_ID,
+      user_id: currentUserId,
     });
   } catch {
     return;
@@ -421,7 +519,7 @@ async function renderProgress() {
   el("progress-badges").innerHTML = "";
   let log;
   try {
-    log = await callTool("get_fitness_log", { user_id: USER_ID, days: 28 });
+    log = await callTool("get_fitness_log", { user_id: currentUserId, days: 28 });
   } catch {
     el("progress-streak").textContent = "Couldn't reach Vera's server.";
     return;
@@ -437,7 +535,6 @@ async function renderProgress() {
     .map((d) => `<div class="cal-cell${d.active ? " active" : ""}" title="${d.date}">${dayLabel(d.date)}</div>`)
     .join("");
 
-  const icons = { stretch: "🪑", meditation: "🧘", memory_game: "🧠" };
   if (!log.milestones.length) {
     el("progress-badges").innerHTML = `<div class="say-text">No badges yet — they're on the way!</div>`;
   } else {
@@ -445,24 +542,41 @@ async function renderProgress() {
       .map((m) => `<div class="badge">🏅 ${escapeHtml(m.title)}</div>`)
       .join("");
   }
-  void icons;
 }
 
 // ---------- wiring ----------
 
 function init() {
+  Companion.init();
   setInterval(tickClock, 1000);
   tickClock();
 
-  el("home-btn").addEventListener("click", () => showScreen("home"));
+  el("home-btn").addEventListener("click", () => showScreen(currentUserId ? "home" : "start"));
+  el("switch-profile-btn").addEventListener("click", () => showScreen("start"));
 
-  document.querySelectorAll(".tile[data-intent]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const intent = btn.dataset.intent;
-      showScreen(intent);
-      if (intent === "memory") startMemoryGame();
-      if (intent === "stretch") startStretch();
-    });
+  el("add-profile-btn").addEventListener("click", () => {
+    el("add-profile-form").classList.toggle("hidden");
+    el("add-profile-name").focus();
+  });
+  const createProfile = async () => {
+    const name = el("add-profile-name").value.trim();
+    if (!name) return;
+    try {
+      const created = await callTool("create_profile", { name });
+      el("add-profile-name").value = "";
+      el("add-profile-form").classList.add("hidden");
+      selectProfile(created.user_id);
+    } catch {
+      await say("I couldn't create that profile. Let's try again.");
+    }
+  };
+  el("add-profile-save").addEventListener("click", createProfile);
+  el("add-profile-name").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") createProfile();
+  });
+
+  document.querySelectorAll("#screen-home .tile[data-intent]").forEach((btn) => {
+    btn.addEventListener("click", () => showScreen(btn.dataset.intent));
   });
 
   document.querySelectorAll("#meditation-select .tile[data-med]").forEach((btn) => {
@@ -500,7 +614,7 @@ function init() {
     el("type-row").classList.remove("hidden");
   }
 
-  renderHome();
+  showScreen("start");
 }
 
 document.addEventListener("DOMContentLoaded", init);

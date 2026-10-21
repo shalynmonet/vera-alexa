@@ -64,6 +64,17 @@ def test_full_flow(tmp_path):
                     summ = _data(await s.call_tool("get_daily_summary", {}))
                     assert "Rose completed 2 activities today" in summ["summary"]
 
+                    sessions = _data(await s.call_tool("list_sessions", {}))
+                    assert {g["id"] for g in sessions["games"]} == {"memory_game"}
+
+                    profiles = _data(await s.call_tool("list_profiles", {}))
+                    assert {"user_id": "demo", "name": "Rose"} in profiles["profiles"]
+
+                    created = _data(await s.call_tool("create_profile", {"name": "Tom"}))
+                    assert created["user_id"] == "tom"
+                    profiles = _data(await s.call_tool("list_profiles", {}))
+                    assert {p["user_id"] for p in profiles["profiles"]} == {"demo", "tom"}
+
         asyncio.run(run())
     finally:
         proc.terminate()

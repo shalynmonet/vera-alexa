@@ -44,6 +44,14 @@ MEDITATIONS = {
     },
 }
 
+# Catalog of Vera's games, for the Games section on the home screen.
+GAMES = {
+    "memory_game": {
+        "title": "Memory Game",
+        "description": "Listen to a short list of words, then say back as many as you can remember.",
+    },
+}
+
 # Familiar, easy-to-picture words for the memory game.
 MEMORY_WORDS = [
     "apple", "church", "garden", "piano", "river", "biscuit", "quilt", "porch",
