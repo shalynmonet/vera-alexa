@@ -88,28 +88,41 @@ member = {
 }
 user["family"] = [member]
 
-cheer_filename = f"{family.new_id()}.wav"
-_make_placeholder_cheer_audio(CHEER_MEDIA_DIR / cheer_filename)
-user["cheers"] = [{
-    "id": family.new_id(),
-    "family_id": member["id"],
-    "family_name": member["name"],
-    "cheer_type": "milestone",
-    "target": "streak_7",
-    "media_type": "audio",
-    "file": cheer_filename,
-    "photo_file": None,
-    "storage": "local",
-    "duration_seconds": 2,
-    "recorded_on": (today - timedelta(days=1)).isoformat(),
-    "activities_at_recording": len(user["activities"]),
-    "status": "locked",
-    "played_on": None,
-}]
+def _new_cheer(cheer_type, target, status, days_ago, played=False):
+    filename = f"{family.new_id()}.wav"
+    _make_placeholder_cheer_audio(CHEER_MEDIA_DIR / filename)
+    return {
+        "id": family.new_id(),
+        "family_id": member["id"],
+        "family_name": member["name"],
+        "cheer_type": cheer_type,
+        "target": target,
+        "media_type": "audio",
+        "file": filename,
+        "photo_file": None,
+        "storage": "local",
+        "duration_seconds": 3,
+        "recorded_on": (today - timedelta(days=days_ago)).isoformat(),
+        "activities_at_recording": len(user["activities"]),
+        "status": status,
+        "played_on": (today - timedelta(days=days_ago - 1)).isoformat() if played else None,
+    }
+
+# One attached to the badge this demo is set up to earn live today (still
+# locked -- that's the point), plus a few already on the Home shelf so it
+# doesn't look empty: an anytime one waiting to play, and a couple already
+# played (replayable) from "earlier this week".
+user["cheers"] = [
+    _new_cheer("milestone", "streak_7", "locked", days_ago=1),
+    _new_cheer("anytime", None, "unlocked", days_ago=2),
+    _new_cheer("anytime", None, "played", days_ago=5, played=True),
+    _new_cheer("milestone", "first_session", "played", days_ago=20, played=True),
+]
 
 store.save_user(user)
 s = progress.streaks(user["activities"], today)
 print(f"Seeded {args.name}: {len(user['activities'])} sessions, current streak {s['current']}, "
       f"badges {[m['title'] for m in user['milestones']]}")
 print(f"Family: Jake is one cheer away from celebrating {args.name}'s 7 Day Streak -- "
-      "finish one more session today to see it play.")
+      "finish one more session today to see it play. The Home shelf also has "
+      "an anytime cheer waiting and two already played, ready to replay.")

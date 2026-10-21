@@ -4,7 +4,7 @@ A warm wellness companion for older adults, built for Alexa+. Vera keeps minds a
 
 Vera is named after my late great-grandmother and inspired by caring for my grandmother -- specifically, by how much of caregiving is just noticing: did she move today, did she eat, is she lonely, is anyone keeping track. I built Vera to be the thing quietly keeping track, so a family doesn't have to ask about it every day, and so the person at the center of it all gets encouragement instead of a checklist.
 
-**On Alexa+, Vera uses the customer's Amazon account identity automatically** -- there are no accounts, logins, or passwords anywhere in this app. A household's Alexa+ voice profiles map onto Vera's own per-person profiles; a family member's cheer-recording link works from a single private, unguessable URL, nothing to sign into.
+**On Alexa+, Vera uses the customer's Amazon account identity automatically** -- there are no accounts, logins, or passwords anywhere in this app. On a real Echo, Vera opens as the signed-in household member automatically, and Alexa voice profiles tell household members apart. The simulator mirrors this by remembering the person on each device. A family member's cheer-recording link works from a single private, unguessable URL, nothing to sign into either.
 
 ## Architecture
 
@@ -393,7 +393,10 @@ Kept in [FRICTION_LOG.md](FRICTION_LOG.md), using the hackathon's own entry temp
 
 ## Roadmap
 
-- Optional check in calls
+- A native Fire TV app for the Living Room Display, instead of today's simulated `/tv` page
+- Ring integration for gentle, activity-aware check-ins -- only with the resident's consent, and never framed as surveillance
+- Voice-based cognitive screening, developed together with clinicians rather than inferred from game scores alone
+- Automatic SMS nudges once a toll-free number is registered (the code already exists behind `VERA_SMS_ENABLED`; see Family Cheers)
 - Move `data/vera.json` to DynamoDB so the App Runner deployment survives a redeploy and can scale past one instance
 
 ## License
