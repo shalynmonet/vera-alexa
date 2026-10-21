@@ -330,15 +330,7 @@ actually gets uploaded from).
 
 ## Friction log
 
-Things that were harder than expected building this, kept here rather than
-smoothed over:
-
-- **Nova Lite sometimes talked to itself.** Its replies would occasionally arrive wrapped in `<thinking>...</thinking>` or `<response>...</response>` tags instead of plain text -- harmless in a text chat window, but Vera's replies get read aloud and shown as a caption, so leaking either tag straight to speech would have been obviously broken. `web/bedrock_chat.py`'s `_clean_reply` strips both before anything is spoken.
-- **One giant end-to-end test started silently timing out around the 300-second mark** on this Windows dev machine after the test file grew past ~60 sequential MCP tool calls in a single client session -- no error for a long time, then a `ReadTimeout` deep in `httpx`/`httpcore`. Took a repro script against a clean server to confirm the *tools* weren't the problem before suspecting the long-lived connection itself. Fixed by splitting the one test into a few focused tests, each starting its own short-lived server -- the real fix turned out to be architectural (smaller sessions), not a timeout tweak.
-- **Getting Vera to stop talking over her own audio** -- the chair-stretch and meditation screens both start playing a track right after Vera's spoken intro, and `speakText()`/`<audio>.play()` are both async; without awaiting the intro's completion callback first, the two would overlap every time. Easy to miss because it only showed up with real audio, not in a quiet unit test.
-- **Deciding what a "family member" needs to not be an account.** The brief for this project was explicit: no logins anywhere. For a dashboard (the caregiver) that's easy -- it's just another profile. For a family member who should be able to record one cheer from their phone and nothing else, the honest answer turned out to be "a single unguessable URL is the whole access model," which took longer to be comfortable with than it probably should have, because it's unfamiliar compared to reaching for an account by default.
-- **Presigned URLs plus a Python `lru_cache` don't mix cleanly.** Caching whether a file exists in S3 is the obvious way to avoid a `HEAD` request on every single `list_sessions` call, but it meant writing the tests for "falls back to local" and "prefers S3" very deliberately, each clearing the cache first -- otherwise one test's monkeypatched bucket state leaks into the next test that happens to check the same filename.
-- **A presigned-URL call with no bucket configured didn't fail the way I expected.** `boto3.generate_presigned_url(Bucket=None, ...)` doesn't raise a clean `ClientError` -- it blows up with a raw `TypeError` deep inside botocore's internal bucket-name validator, which my original `except (ClientError, BotoCoreError)` didn't catch. Found it by actually calling the function with nothing configured instead of assuming the "it's optional, so it's safe" docstring I'd just written was true.
+Kept in [FRICTION_LOG.md](FRICTION_LOG.md), using the hackathon's own entry template (task attempted, steps taken, expected vs. actual, severity, workaround, suggestion) rather than prose here.
 
 ## Roadmap
 
