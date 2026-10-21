@@ -65,10 +65,13 @@ The included **web simulator** (`web/app.py`) exists so this could be built and 
 | `get_daily_summary` | Caregiver friendly summary of the day, including self-reported activities |
 | `remember_fact` | Saves a meaningful personal detail (family, hobbies, upcoming events) to bring up again later; refuses health details |
 | `get_memories` | Recent personal facts, most recent first, for Nova to naturally bring one up in conversation |
-| `list_family`, `add_family_member`, `remove_family_member` | Family members who can record cheers, each with a private record-link token |
-| `resolve_family_token` | Looks up who a private record-page link belongs to and who it's for |
+| `get_engagement_trends` | Gentle, descriptive accuracy/pace trends per cognitive game, month over month -- never a score, an alert, or a health claim |
+| `list_family`, `add_family_member`, `update_family_member`, `remove_family_member` | Family members who can record cheers (just a name and phone to add; relationship/nickname/email are the family member's own answers from their first visit) |
+| `resolve_family_token` | Looks up who a private record-page link belongs to and who it's for, and whether they've finished first-visit setup |
 | `upcoming_milestones` | Milestones the person is one step away from, each with a ready-made "almost there" nudge |
-| `save_cheer`, `list_cheers`, `get_cheer`, `mark_cheer_played` | Save, browse, fetch, and mark-played the audio/video cheers family members record |
+| `get_cheer_prompts` | Ready-made cheer scripts generated from the person's real data -- one per close milestone, three fixed "anytime" lines, one per activity they actually do |
+| `add_cheer`, `list_cheers`, `next_cheer`, `mark_cheer_played`, `delete_cheer` | Save, browse, and play back family cheers -- each is locked until its milestone/activity condition is met, then surfaces through `next_cheer`'s daily cap and family-member rotation |
+| `check_family_alerts`, `mark_alert_sent` | "Running low" email nudges when a family member's unlocked-cheer queue drops to 1 or 0, sent once per drop |
 
 **Design choices for older users:** every activity counts toward the streak, one missed day is forgiven (grace day), and missed days are never framed as failures.
 
@@ -119,43 +122,73 @@ Every tool accepts an optional `on_date` (YYYY-MM-DD) so demos and tests can use
 
 ### Family Cheers
 
-Family members can record a short audio or video cheer for the person using
-Vera, with no account or login of their own. From the caregiver dashboard
-(`/caregiver/<user_id>`, linked from the Progress screen), add a family
-member's name, relationship, and optional email; each gets a unique, private
-record-page link (`/cheer/<token>`) built around `secrets.token_urlsafe`
-(`vera/family.py`) -- the token itself is the only thing that page knows
-them by.
+Family members can record a short audio, "voice + photo", or video cheer
+for the person using Vera, with no account or login of their own -- the
+caregiver adds just a name and phone number (`/caregiver/<user_id>`,
+linked from the Progress screen), and each family member gets one
+permanent, private, unguessable link (`/cheer/<token>`, `vera/family.py`).
+Adding them shows a **Text Invite** button (an `sms:` link prefilled with
+an invite message, opening the phone's own Messages app -- zero server
+involvement) and a Copy Link fallback.
 
-The record page (`web/static/cheer/record.html`, `web/static/js/cheer-record.js`)
-is a single large Record button (browser `MediaRecorder`, audio or video, 30
-seconds max), with preview, re-record, and Send. A cheer can be attached to
-one of the person's upcoming milestones (`upcoming_milestones` finds
-milestones they're one step away from -- "1 day away", "about 10 minutes
-away" -- and writes a ready-made nudge like "Rose is 1 day away from their 7
-Day Streak! Record a cheer and Vera will play it the moment she gets
-there"), or saved as an "anytime" cheer for a backup bank.
+**A family member's first visit** is a short welcome screen -- confirm
+their name, pick a relationship, say what they call the person (prefilled
+if the caregiver guessed one), and optionally leave an email with an
+"email me when they're close to a milestone or running low on my cheers"
+checkbox (`update_family_member`). Every later visit skips straight to
+recording, with a small "Edit my details" link.
 
-The dashboard shows the daily summary, each upcoming milestone's nudge with
-a copyable record link per family member, and the family list. With Amazon
-SES configured (sandbox mode -- sender and every recipient must be verified
-identities), it can also email a nudge directly; copying the link always
-works regardless.
+**The family link page** ("Help Mom keep going 💜") shows a 5-cheer goal
+with progress ("2 of 5 sent") and ready-made scripts generated from the
+person's *real* data (`get_cheer_prompts`): one per milestone they're
+close to ("Congrats on your 7 day streak!"), three fixed "anytime" lines,
+and one per activity they actually do ("Enjoy your meditation, Mom").
+Tapping a script opens the recorder with it shown; "Record My Own
+Message" opens the same recorder with a choice of when it should play
+(anytime, a specific upcoming milestone, or after a specific activity).
+Recording (`web/static/js/cheer-record.js`) is capped at 15 seconds with a
+visible countdown, auto-stops, and offers preview/re-record before Send;
+the server independently re-validates that same 15 second cap and a size
+limit before accepting the upload.
 
-When a milestone is newly earned, Vera says "Someone has a message for
-you!" and plays any matching cheer full screen. A cheer attached to a
-milestone that was already earned before it was recorded has missed that
-moment, so it's queued instead and plays at the next app open ("You have a
-message from Jake"), right after the proactive greeting.
+**Locked until it matters:** a cheer starts `locked` unless its condition
+is already true, and `add_cheer`/the activity-logging path (`_unlock_cheers`
+in server.py) unlocks it the moment that becomes true -- a milestone cheer
+when that milestone is earned, an activity cheer the next time that
+activity type is logged, an "anytime" cheer on the person's very next
+completed activity after it was recorded. `next_cheer` picks the next
+`unlocked` one (oldest first), capped at `VERA_MAX_CHEERS_PER_DAY` (default
+2) per day and rotating across family members so one person's cheers never
+play back to back. The same `next_cheer` call drives every delivery
+moment: a newly earned milestone ("Someone has a message for you!"), a
+workout's step-break pause (one at most, full screen, "voice + photo"
+cheers showing the photo while the audio plays), and app open ("You have a
+message from Jake"). Home's **Messages from Family** shelf shows every
+`unlocked` cheer, lets you replay any `played` one, and shows a locked
+count without revealing anything ("2 surprises from family waiting").
+Either the person or the caregiver can `delete_cheer` any cheer at any
+time.
 
-A recorded cheer uploads straight to S3 when a bucket is configured (and
-falls back to local disk if that upload fails, so a recording is never
-lost over a flaky connection); `list_cheers`/`get_cheer` hand back a fresh
-presigned `url` for an S3 cheer, or nothing for a local one, in which case
-the frontend already knows to fall back to `/cheer-media/<file>`. This
-matters beyond tidiness: a cloud-hosted MCP server's local disk doesn't
-survive a redeploy or scale past one instance, so in that environment S3
-is the only place a recording reliably lives.
+**Alerts:** `check_family_alerts` finds any family member whose unlocked
+queue just dropped to 1 or 0 (opted into email) and the caregiver
+dashboard sends one email nudge the next time it loads -- `mark_alert_sent`
+keeps it from repeating until the count changes again. This app has no
+background job runner, so "next dashboard load" is the honest trigger
+point rather than a true scheduled check.
+
+A recorded cheer (and its optional photo) uploads straight to S3 when a
+bucket is configured, falling back to local disk if that upload fails so a
+recording is never lost over a flaky connection; `list_cheers`/`next_cheer`
+hand back a fresh presigned `url`/`photo_url` for an S3 cheer, or nothing
+for a local one, in which case the frontend already knows to fall back to
+`/cheer-media/<file>`. This matters beyond tidiness: a cloud-hosted MCP
+server's local disk doesn't survive a redeploy or scale past one instance,
+so in that environment S3 is the only place a recording reliably lives.
+
+Automatic SMS nudges (the invite itself is always just a plain `sms:`
+link, no AWS involved) are built on AWS End User Messaging SMS behind
+`VERA_SMS_ENABLED` (off by default, since it needs a registered toll-free
+number -- see Configuration) and always append "Reply STOP to opt out."
 
 ## Media storage: local vs. S3
 
@@ -191,6 +224,7 @@ aws s3 sync web/static/media s3://your-bucket-name/media
 | **S3** | Optional storage for exercise/meditation videos and Family Cheers recordings, served back out via presigned URLs so the bucket can stay private. Required (not just nice to have) once the MCP server runs somewhere its local disk doesn't persist, like App Runner. |
 | **App Runner** | Hosts the MCP server itself (`server.py`) with a public HTTPS endpoint, built straight from this GitHub repo -- see [Deploying to AWS App Runner](#deploying-the-mcp-server-to-aws-app-runner). |
 | **SES** | Optional: lets the caregiver dashboard email a family member their cheer-recording nudge directly, instead of only copying the link. Sandbox mode by default (sender and every recipient must be verified). |
+| **End User Messaging SMS** | Optional, off by default (`VERA_SMS_ENABLED`): automatic SMS nudges once a toll-free number is registered. The family invite itself never needs this -- it's a plain `sms:` link the caregiver's own phone sends. |
 
 ## Run it (Windows PowerShell)
 
@@ -233,7 +267,10 @@ Includes an end to end test that starts the server and calls every core tool thr
 | `VERA_SES_FROM_EMAIL` | *(none)* | Verified sender for optional email nudges; without it, emailing a nudge fails (copying the record link still always works) |
 | `VERA_S3_BUCKET` | *(none)* | Enables S3 storage for media/cheers; without it, everything falls back to local disk |
 | `VERA_S3_PREFIX` | *(none)* | Optional key prefix inside the bucket |
-| `AWS_REGION` | `us-east-1` | Region for S3 (and Bedrock/Polly/SES, in the web simulator) |
+| `VERA_MAX_CHEERS_PER_DAY` | `2` | How many family cheers `next_cheer` will surface in one day |
+| `VERA_SMS_ENABLED` | `false` | Turns on automatic SMS nudges (not the family invite, which is always a plain `sms:` link) |
+| `VERA_SMS_ORIGINATION_NUMBER` | *(none)* | Your registered toll-free number; required once `VERA_SMS_ENABLED=true` |
+| `AWS_REGION` | `us-east-1` | Region for S3/SMS (and Bedrock/Polly/SES, in the web simulator) |
 
 ## Deploying the MCP server to AWS App Runner
 
@@ -322,11 +359,13 @@ point this at your App Runner URL's `/mcp` once it's deployed),
 (default `us.amazon.nova-lite-v1:0`), `VERA_POLLY_VOICE` (default `Ruth`),
 `VERA_POLLY_ENGINE` (default `neural`), `VERA_POLLY_RATE` (default `92%`),
 plus everything under [Configuration](#configuration) (`AWS_REGION`,
-`VERA_SES_FROM_EMAIL`, `VERA_S3_BUCKET`, `VERA_S3_PREFIX`). Needs AWS
-credentials (e.g. via `aws configure`) with `bedrock:InvokeModel`,
-`polly:SynthesizeSpeech`, `ses:SendEmail` for email nudges, and, if a
-bucket is configured, `s3:PutObject` on it (this is where a recorded cheer
-actually gets uploaded from).
+`VERA_SES_FROM_EMAIL`, `VERA_S3_BUCKET`, `VERA_S3_PREFIX`,
+`VERA_MAX_CHEERS_PER_DAY`, `VERA_SMS_ENABLED`, `VERA_SMS_ORIGINATION_NUMBER`).
+Needs AWS credentials (e.g. via `aws configure`) with `bedrock:InvokeModel`,
+`polly:SynthesizeSpeech`, `ses:SendEmail` for email nudges, `s3:PutObject`
+on the bucket if one's configured (this is where a recorded cheer and its
+optional photo actually get uploaded from), and, only once
+`VERA_SMS_ENABLED=true`, `sms-voice:SendTextMessage`.
 
 ## Friction log
 

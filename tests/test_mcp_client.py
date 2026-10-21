@@ -38,7 +38,12 @@ def _data(result):
 async def _server_session(tmp_path):
     port = _free_port()
     env = {**os.environ, "VERA_PORT": str(port), "VERA_DATA": str(tmp_path / "vera.json")}
-    proc = subprocess.Popen([sys.executable, "server.py"], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # stdout/stderr go to DEVNULL, not PIPE: a PIPE nobody reads fills its OS
+    # buffer after enough log lines (uvicorn logs one per request) and then
+    # blocks the server process on its next write -- a real, reproducible
+    # hang on a long enough test, not just "transient flakiness". See
+    # FRICTION_LOG.md.
+    proc = subprocess.Popen([sys.executable, "server.py"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(50):
             try:
@@ -52,7 +57,11 @@ async def _server_session(tmp_path):
                 yield s
     finally:
         proc.terminate()
-        proc.wait(5)
+        try:
+            proc.wait(5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(5)
 
 
 def test_games_and_activities_flow(tmp_path):
@@ -159,55 +168,101 @@ def test_family_cheers_flow(tmp_path):
         async with _server_session(tmp_path) as s:
             await s.call_tool("set_profile", {"name": "Rose"})
 
-            # Earn memory_perfect so a cheer attached to it queues instead of
-            # waiting to play "the moment it's earned" (already passed).
+            # Earn first_session/memory_perfect so a milestone cheer attached
+            # to one of them can start out already unlocked.
             game = _data(await s.call_tool("start_memory_game", {"difficulty": 3}))
             await s.call_tool("submit_memory_answer", {"answer": " ".join(game["words"])})
 
             added = _data(await s.call_tool("add_family_member", {
-                "name": "Jake", "relationship": "Grandson", "email": "jake@example.com",
+                "name": "Jake", "phone": "+15551234567", "nickname": "Grandma",
             }))
             member = added["member"]
-            assert member["token"]
+            assert member["token"] and member["phone"] == "+15551234567"
+            assert member["onboarded"] is False
+
             family_list = _data(await s.call_tool("list_family", {}))
-            assert any(m["id"] == member["id"] for m in family_list["family"])
+            assert family_list["family"][0]["unplayed_count"] == 0
 
             resolved = _data(await s.call_tool("resolve_family_token", {"token": member["token"]}))
-            assert resolved["user_id"] == "demo"
-            assert resolved["member"]["id"] == member["id"]
+            assert resolved["user_id"] == "demo" and resolved["member"]["id"] == member["id"]
             bad = _data(await s.call_tool("resolve_family_token", {"token": "not-a-real-token"}))
             assert "error" in bad
+
+            # First-visit onboarding: the family member's own answers.
+            updated = _data(await s.call_tool("update_family_member", {
+                "family_id": member["id"], "relationship": "Grandson", "nickname": "Nana",
+                "email": "jake@example.com", "email_opt_in": True,
+            }))["member"]
+            assert updated["onboarded"] is True and updated["nickname"] == "Nana"
 
             upcoming = _data(await s.call_tool("upcoming_milestones", {}))
             assert isinstance(upcoming["upcoming"], list)
 
-            # Cheer for an already-earned milestone -- queues.
-            already = _data(await s.call_tool("save_cheer", {
+            prompts = _data(await s.call_tool("get_cheer_prompts", {}))
+            assert len(prompts["anytime"]) == 3
+
+            # Rejected: over the 15 second cap.
+            too_long = _data(await s.call_tool("add_cheer", {
+                "family_id": member["id"], "media_type": "video", "file": "x.webm",
+                "duration_seconds": 25, "cheer_type": "anytime",
+            }))
+            assert "error" in too_long
+
+            # Milestone cheer for one already earned -- starts unlocked.
+            milestone_cheer = _data(await s.call_tool("add_cheer", {
                 "family_id": member["id"], "media_type": "video", "file": "a.webm",
-                "milestone_id": "memory_perfect",
-            }))
-            assert already["cheer"]["queued"]
-            assert already["cheer"]["family_name"] == "Jake"
+                "duration_seconds": 10, "cheer_type": "milestone", "target": "memory_perfect",
+            }))["cheer"]
+            assert milestone_cheer["status"] == "unlocked"
+            assert milestone_cheer["family_name"] == "Nana"
 
-            # Anytime cheer (no milestone) -- not queued.
-            anytime = _data(await s.call_tool("save_cheer", {
+            # Anytime cheer -- always starts locked, unlocks on the next
+            # completed activity after it was recorded.
+            anytime_cheer = _data(await s.call_tool("add_cheer", {
                 "family_id": member["id"], "media_type": "audio", "file": "b.webm",
-            }))
-            assert not anytime["cheer"]["queued"]
+                "duration_seconds": 8, "cheer_type": "anytime",
+            }))["cheer"]
+            assert anytime_cheer["status"] == "locked"
 
-            queued = _data(await s.call_tool("list_cheers", {"queued_only": True}))
-            assert {c["id"] for c in queued["cheers"]} == {already["cheer"]["id"]}
+            unlocked = _data(await s.call_tool("list_cheers", {"status": "unlocked"}))["cheers"]
+            assert {c["file"] for c in unlocked} == {"a.webm"}
+            locked = _data(await s.call_tool("list_cheers", {"status": "locked"}))["cheers"]
+            assert {c["file"] for c in locked} == {"b.webm"}
 
-            for_milestone = _data(await s.call_tool("list_cheers", {"milestone_id": "memory_perfect"}))
-            assert len(for_milestone["cheers"]) == 1
+            await s.call_tool("log_activity", {"activity": "walk", "minutes": 10})
+            unlocked_after = _data(await s.call_tool("list_cheers", {"status": "unlocked"}))["cheers"]
+            assert {c["file"] for c in unlocked_after} == {"a.webm", "b.webm"}
 
-            fetched = _data(await s.call_tool("get_cheer", {"cheer_id": already["cheer"]["id"]}))
-            assert fetched["cheer"]["file"] == "a.webm"
+            # next_cheer: oldest unlocked first, respecting the daily cap.
+            first = _data(await s.call_tool("next_cheer", {}))["cheer"]
+            assert first["file"] == "a.webm"
+            await s.call_tool("mark_cheer_played", {"cheer_id": first["id"]})
 
-            marked = _data(await s.call_tool("mark_cheer_played", {"cheer_id": already["cheer"]["id"]}))
-            assert marked["ok"]
-            queued_after = _data(await s.call_tool("list_cheers", {"queued_only": True, "unplayed_only": True}))
-            assert queued_after["cheers"] == []
+            second = _data(await s.call_tool("next_cheer", {}))["cheer"]
+            assert second["file"] == "b.webm"
+            await s.call_tool("mark_cheer_played", {"cheer_id": second["id"]})
+
+            # A third unlocked cheer exists, but the default daily cap (2) is hit.
+            third_cheer = _data(await s.call_tool("add_cheer", {
+                "family_id": member["id"], "media_type": "video", "file": "c.webm",
+                "duration_seconds": 5, "cheer_type": "milestone", "target": "first_session",
+            }))["cheer"]
+            assert third_cheer["status"] == "unlocked"
+            capped = _data(await s.call_tool("next_cheer", {}))
+            assert capped["cheer"] is None
+
+            played = _data(await s.call_tool("list_cheers", {"status": "played"}))["cheers"]
+            assert {c["file"] for c in played} == {"a.webm", "b.webm"}
+
+            deleted = _data(await s.call_tool("delete_cheer", {"cheer_id": third_cheer["id"]}))
+            assert deleted["deleted"]
+
+            # Running-low alert: Jake is down to 0 unplayed and opted into email.
+            alerts = _data(await s.call_tool("check_family_alerts", {}))["alerts"]
+            assert len(alerts) == 1 and alerts[0]["family_id"] == member["id"] and alerts[0]["unplayed"] == 0
+            await s.call_tool("mark_alert_sent", {"family_id": member["id"], "unplayed": 0})
+            alerts_after = _data(await s.call_tool("check_family_alerts", {}))["alerts"]
+            assert alerts_after == []
 
             removed = _data(await s.call_tool("remove_family_member", {"family_id": member["id"]}))
             assert removed["removed"]

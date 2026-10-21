@@ -77,8 +77,13 @@ for ago in sorted(pattern, reverse=True):
 member = {
     "id": family.new_id(),
     "name": "Jake",
+    "phone": "+15555550123",
+    "nickname": None,
     "relationship": "Grandson",
     "email": None,
+    "email_opt_in": False,
+    "onboarded": True,
+    "low_queue_notified_at": None,
     "token": family.new_token(),
 }
 user["family"] = [member]
@@ -89,13 +94,17 @@ user["cheers"] = [{
     "id": family.new_id(),
     "family_id": member["id"],
     "family_name": member["name"],
-    "milestone_id": "streak_7",
+    "cheer_type": "milestone",
+    "target": "streak_7",
     "media_type": "audio",
     "file": cheer_filename,
+    "photo_file": None,
     "storage": "local",
+    "duration_seconds": 2,
     "recorded_on": (today - timedelta(days=1)).isoformat(),
-    "queued": False,
-    "played": False,
+    "activities_at_recording": len(user["activities"]),
+    "status": "locked",
+    "played_on": None,
 }]
 
 store.save_user(user)

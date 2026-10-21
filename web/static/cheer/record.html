@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Record a Cheer</title>
+<title>Send a Cheer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -22,23 +22,90 @@
     <p class="say-text">This cheer link isn't valid anymore. Ask for a new one.</p>
   </div>
 
+  <!-- First visit only -->
+  <div id="welcome" class="cheer-card hidden">
+    <h1 id="welcome-title" class="screen-title">Welcome!</h1>
+    <p class="say-text" id="welcome-sub"></p>
+    <label class="say-text" for="setup-name">Your name</label>
+    <input id="setup-name" type="text" autocomplete="off" />
+    <label class="say-text" for="setup-relationship">Your relationship</label>
+    <select id="setup-relationship">
+      <option value="">Choose one…</option>
+      <option>Granddaughter</option>
+      <option>Grandson</option>
+      <option>Daughter</option>
+      <option>Son</option>
+      <option>Friend</option>
+      <option value="Other">Other</option>
+    </select>
+    <input id="setup-relationship-other" type="text" placeholder="Relationship" class="hidden" autocomplete="off" />
+    <label class="say-text" id="setup-nickname-label" for="setup-nickname">What do you call them?</label>
+    <input id="setup-nickname" type="text" autocomplete="off" />
+    <label class="say-text" for="setup-email">Email (optional)</label>
+    <input id="setup-email" type="email" autocomplete="off" />
+    <label class="say-text checkbox-row">
+      <input id="setup-email-optin" type="checkbox" />
+      <span id="setup-email-optin-label">Email me when they're close to a milestone or running low on my cheers.</span>
+    </label>
+    <button id="setup-save-btn" class="primary-btn">Let's go</button>
+  </div>
+
+  <!-- Returning (or just onboarded) -->
+  <div id="main" class="cheer-card hidden">
+    <h1 id="main-title" class="screen-title">Help them keep going 💜</h1>
+    <p class="say-text" id="main-progress"></p>
+    <p class="say-text" id="main-message"></p>
+
+    <div id="suggestions"></div>
+
+    <div class="action-row">
+      <button id="record-own-btn" class="primary-btn">🎙️ Record My Own Message</button>
+    </div>
+    <button id="edit-details-link" class="link-btn">Edit my details</button>
+  </div>
+
+  <div id="edit" class="cheer-card hidden">
+    <h1 class="screen-title">Edit your details</h1>
+    <label class="say-text" for="edit-nickname">What do you call them?</label>
+    <input id="edit-nickname" type="text" autocomplete="off" />
+    <label class="say-text" for="edit-email">Email (optional)</label>
+    <input id="edit-email" type="email" autocomplete="off" />
+    <label class="say-text checkbox-row">
+      <input id="edit-email-optin" type="checkbox" />
+      <span>Email me when they're close to a milestone or running low on my cheers.</span>
+    </label>
+    <div class="action-row">
+      <button id="edit-cancel-btn" class="secondary-btn">Cancel</button>
+      <button id="edit-save-btn" class="primary-btn">Save</button>
+    </div>
+  </div>
+
   <div id="recorder" class="cheer-card hidden">
     <h1 id="cheer-title" class="screen-title">Record a cheer</h1>
     <p id="cheer-sub" class="say-text"></p>
 
     <div id="mode-row" class="action-row">
-      <button id="mode-audio-btn" class="secondary-btn">🎤 Record Audio</button>
-      <button id="mode-video-btn" class="secondary-btn">🎥 Record Video</button>
+      <button id="mode-voice-btn" class="secondary-btn">🎤 Voice</button>
+      <button id="mode-voice-photo-btn" class="secondary-btn">📷 Voice + Photo</button>
+      <button id="mode-video-btn" class="secondary-btn">🎥 Video</button>
     </div>
 
-    <div id="milestone-row" class="hidden">
-      <label for="milestone-select" class="say-text">Attach to:</label>
-      <select id="milestone-select"></select>
+    <div id="photo-row" class="hidden">
+      <label for="photo-input" class="secondary-btn">Choose a photo</label>
+      <input id="photo-input" type="file" accept="image/*" capture="environment" class="hidden" />
+      <img id="photo-preview" class="hidden" alt="" />
+    </div>
+
+    <div id="when-row" class="hidden">
+      <label for="when-select" class="say-text">When should this play?</label>
+      <select id="when-select">
+        <option value="anytime">Anytime</option>
+      </select>
     </div>
 
     <div id="record-area" class="hidden">
       <video id="preview-video" class="hidden" playsinline muted></video>
-      <div id="timer" class="big-text">0:00 / 0:30</div>
+      <div id="timer" class="big-text">0:00 / 0:15</div>
       <div class="action-row">
         <button id="start-btn" class="primary-btn">⬤ Record</button>
         <button id="stop-btn" class="secondary-btn hidden">⬛ Stop</button>
@@ -47,6 +114,7 @@
 
     <div id="preview-area" class="hidden">
       <p class="say-text">Here's your cheer:</p>
+      <img id="playback-photo" class="hidden" alt="" />
       <video id="playback-video" class="hidden" controls playsinline></video>
       <audio id="playback-audio" class="hidden" controls></audio>
       <div class="action-row">
@@ -54,10 +122,14 @@
         <button id="send-btn" class="primary-btn">Send</button>
       </div>
     </div>
+  </div>
 
-    <div id="sent" class="hidden">
-      <h1 class="screen-title">Sent! 💛</h1>
-      <p class="say-text">Vera will share it at just the right moment.</p>
+  <div id="sent" class="cheer-card hidden">
+    <h1 class="screen-title">Sent! 💛</h1>
+    <p class="say-text" id="sent-progress"></p>
+    <p class="say-text" id="sent-note"></p>
+    <div class="action-row">
+      <button id="sent-another-btn" class="primary-btn">Record Another</button>
     </div>
   </div>
 

@@ -107,9 +107,9 @@ async function celebrate(milestones) {
   overlay.classList.add("hidden");
   titleEl.textContent = "";
 
-  for (const m of milestones) {
-    await playCheerForMilestone(m.id);
-  }
+  // At most one cheer per celebration moment -- next_cheer already applies
+  // the daily cap and rotates across family members.
+  await tryPlayNextCheer();
 }
 
 // ---------- family cheers ----------
@@ -119,10 +119,14 @@ function showCheerOverlay(cheer) {
     const overlay = el("cheer-overlay");
     const videoEl = el("cheer-video");
     const audioEl = el("cheer-audio");
+    const photoEl = el("cheer-photo");
     const isVideo = cheer.media_type === "video";
+    const hasPhoto = cheer.media_type === "voice_photo" && (cheer.photo_url || cheer.photo_file);
     el("cheer-from").textContent = `A message from ${cheer.family_name}`;
     videoEl.classList.toggle("hidden", !isVideo);
     audioEl.classList.toggle("hidden", isVideo);
+    photoEl.classList.toggle("hidden", !hasPhoto);
+    if (hasPhoto) photoEl.src = cheer.photo_url || `/cheer-media/${cheer.photo_file}`;
     const mediaEl = isVideo ? videoEl : audioEl;
     mediaEl.src = cheer.url || `/cheer-media/${cheer.file}`;
     overlay.classList.remove("hidden");
@@ -133,6 +137,7 @@ function showCheerOverlay(cheer) {
       audioEl.pause();
       videoEl.removeAttribute("src");
       audioEl.removeAttribute("src");
+      photoEl.removeAttribute("src");
       overlay.classList.add("hidden");
       el("cheer-dismiss-btn").removeEventListener("click", finish);
       mediaEl.removeEventListener("ended", finish);
@@ -143,42 +148,26 @@ function showCheerOverlay(cheer) {
   });
 }
 
-async function playCheerForMilestone(milestoneId) {
-  let cheers;
+// The single place any screen asks "is a family cheer due right now?" --
+// server-side next_cheer already applies the daily cap and rotates across
+// family members, so every call site (a milestone, a workout step break,
+// app open) just needs to ask and play whatever comes back, or nothing.
+async function tryPlayNextCheer({ onAppOpen = false } = {}) {
+  let cheer;
   try {
-    const res = await callTool("list_cheers", { user_id: currentUserId, milestone_id: milestoneId, unplayed_only: true });
-    cheers = res.cheers.filter((c) => !c.queued); // queued ones wait for app-open instead
+    cheer = (await callTool("next_cheer", { user_id: currentUserId })).cheer;
   } catch {
-    return;
+    return false;
   }
-  for (const cheer of cheers) {
-    await say("Someone has a message for you!");
-    await showCheerOverlay(cheer);
-    try {
-      await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId });
-    } catch {
-      // not fatal -- worst case it's offered again next time
-    }
-  }
-}
-
-async function checkQueuedCheers() {
-  let cheers;
+  if (!cheer) return false;
+  await say(onAppOpen ? `You have a message from ${cheer.family_name}.` : "Someone has a message for you!");
+  await showCheerOverlay(cheer);
   try {
-    const res = await callTool("list_cheers", { user_id: currentUserId, queued_only: true, unplayed_only: true });
-    cheers = res.cheers;
+    await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId });
   } catch {
-    return;
+    // not fatal -- worst case it's offered again next time
   }
-  for (const cheer of cheers) {
-    await say(`You have a message from ${cheer.family_name}.`);
-    await showCheerOverlay(cheer);
-    try {
-      await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId });
-    } catch {
-      // not fatal
-    }
-  }
+  return true;
 }
 
 function escapeHtml(s) {
@@ -408,13 +397,52 @@ async function renderHome() {
         ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
         : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
     }
-    await checkQueuedCheers();
+    await tryPlayNextCheer({ onAppOpen: true });
+    await renderFamilyShelf();
     return;
   }
 
   await say(streak > 0
     ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
     : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
+  await renderFamilyShelf();
+}
+
+async function renderFamilyShelf() {
+  const shelf = el("family-shelf");
+  let cheers;
+  try {
+    cheers = (await callTool("list_cheers", { user_id: currentUserId })).cheers;
+  } catch {
+    shelf.classList.add("hidden");
+    return;
+  }
+  const unlocked = cheers.filter((c) => c.status === "unlocked");
+  const played = cheers.filter((c) => c.status === "played");
+  const lockedCount = cheers.filter((c) => c.status === "locked").length;
+  if (!unlocked.length && !played.length && !lockedCount) {
+    shelf.classList.add("hidden");
+    return;
+  }
+  shelf.classList.remove("hidden");
+  const cards = [];
+  unlocked.forEach((c) => cards.push(`<button class="tile family-shelf-card" data-cheer-id="${escapeHtml(c.id)}">💜 A message from ${escapeHtml(c.family_name)}</button>`));
+  played.forEach((c) => cards.push(`<button class="tile family-shelf-card played" data-cheer-id="${escapeHtml(c.id)}">↻ Replay ${escapeHtml(c.family_name)}'s message</button>`));
+  if (lockedCount) {
+    cards.push(`<div class="tile family-shelf-card locked">🔒 ${lockedCount} surprise${lockedCount === 1 ? "" : "s"} from family waiting. Keep going to unlock ${lockedCount === 1 ? "it" : "them"}!</div>`);
+  }
+  el("family-shelf-list").innerHTML = cards.join("");
+  el("family-shelf-list").querySelectorAll(".family-shelf-card[data-cheer-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const cheer = cheers.find((c) => c.id === btn.dataset.cheerId);
+      if (!cheer) return;
+      await showCheerOverlay(cheer);
+      if (cheer.status !== "played") {
+        try { await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId }); } catch { /* not fatal */ }
+      }
+      renderFamilyShelf();
+    });
+  });
 }
 
 // ---------- games ----------
@@ -823,6 +851,8 @@ async function startStretch(preloaded, routineId = "morning_chair_stretch") {
         skipSignal,
       ]);
       pendingAnswer = null;
+      // Workout step break: at most one family cheer, same cap/rotation as anywhere else.
+      if (current === "stretch") await tryPlayNextCheer();
     } else {
       await Promise.race([Promise.all([spoken, paced]), skipSignal]);
     }

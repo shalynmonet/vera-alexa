@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from datetime import date, datetime
 
 from mcp.server.fastmcp import FastMCP
@@ -19,6 +20,7 @@ from vera.storage import Store
 
 HOST = os.environ.get("VERA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VERA_PORT", "8000"))
+MAX_CHEERS_PER_DAY = int(os.environ.get("VERA_MAX_CHEERS_PER_DAY", "2"))
 
 mcp = FastMCP(
     "Vera",
@@ -53,7 +55,27 @@ def _today(on_date: str | None) -> date:
 
 def _log(user: dict, activity_type: str, minutes: float, day: date, details: dict | None = None) -> list[dict]:
     user["activities"].append({"type": activity_type, "date": day.isoformat(), "minutes": minutes, "details": details or {}})
-    return progress.check_milestones(user, day)
+    new_milestones = progress.check_milestones(user, day)
+    _unlock_cheers(user, {m["id"] for m in new_milestones}, activity_type)
+    return new_milestones
+
+
+def _unlock_cheers(user: dict, newly_earned_ids: set[str], logged_activity_type: str) -> None:
+    """A milestone cheer unlocks the moment its milestone is earned; an
+    activity cheer unlocks the moment that activity type is next logged;
+    an anytime cheer unlocks on the person's next completed activity after
+    it was recorded (any type) -- so a cheer always arrives after some
+    real moment of effort, never the instant it's dropped in the box."""
+    earned_ids = {m["id"] for m in user["milestones"]} | newly_earned_ids
+    for c in user.get("cheers", []):
+        if c["status"] != "locked":
+            continue
+        if c["cheer_type"] == "milestone" and c["target"] in earned_ids:
+            c["status"] = "unlocked"
+        elif c["cheer_type"] == "activity" and c["target"] == logged_activity_type:
+            c["status"] = "unlocked"
+        elif c["cheer_type"] == "anytime" and len(user["activities"]) > c.get("activities_at_recording", 0):
+            c["status"] = "unlocked"
 
 
 def _slugify_activity(name: str) -> str:
@@ -502,26 +524,65 @@ def get_engagement_trends(user_id: str = "demo", on_date: str | None = None) -> 
 @mcp.tool()
 def list_family(user_id: str = "demo") -> dict:
     """List this person's family members, each with their private cheer
-    record link's token, for the caregiver dashboard."""
+    record link's token and how many unlocked cheers of theirs are still
+    waiting to play (unplayed_count), for the caregiver dashboard."""
     u = store.get_user(user_id)
-    return {"family": u.get("family", [])}
+    out = []
+    for m in u.get("family", []):
+        unplayed = sum(1 for c in u.get("cheers", []) if c["family_id"] == m["id"] and c["status"] == "unlocked")
+        out.append({**m, "unplayed_count": unplayed})
+    return {"family": out}
 
 
 @mcp.tool()
-def add_family_member(name: str, relationship: str, email: str | None = None, user_id: str = "demo") -> dict:
-    """Add a family member who can record cheers for this person. Returns
-    their record, including the unique token for their private, no-login
-    record-page link."""
+def add_family_member(name: str, phone: str, nickname: str | None = None, user_id: str = "demo") -> dict:
+    """Add a family member who can record cheers for this person -- just a
+    name and phone number. nickname is optional: a guess at what this
+    family member calls the person (e.g. 'Grandma'), shown as a starting
+    point until the family member sets their own on their first visit.
+    Returns their record, including the token for their private, no-login
+    record-page link (the caregiver dashboard turns this into a 'Text
+    invite' sms: link and a copyable URL)."""
     u = store.get_user(user_id)
     u.setdefault("family", [])
     member = {
         "id": family.new_id(),
         "name": name.strip(),
-        "relationship": relationship.strip(),
-        "email": (email or "").strip() or None,
+        "phone": phone.strip(),
+        "nickname": (nickname or "").strip() or None,
+        "relationship": None,
+        "email": None,
+        "email_opt_in": False,
+        "onboarded": False,
+        "low_queue_notified_at": None,
         "token": family.new_token(),
     }
     u["family"].append(member)
+    store.save_user(u)
+    return {"member": member}
+
+
+@mcp.tool()
+def update_family_member(family_id: str, user_id: str = "demo", name: str | None = None, relationship: str | None = None, nickname: str | None = None, email: str | None = None, email_opt_in: bool | None = None) -> dict:
+    """Update a family member's own details -- their first-visit setup (name
+    confirmed, relationship, what they call the person, email) or a later
+    edit. Only given fields change. Setting a relationship marks them as
+    onboarded, so their next visit skips straight to recording."""
+    u = store.get_user(user_id)
+    member = next((m for m in u.get("family", []) if m["id"] == family_id), None)
+    if not member:
+        return {"error": "Family member not found."}
+    if name is not None:
+        member["name"] = name.strip()
+    if relationship is not None:
+        member["relationship"] = relationship.strip()
+        member["onboarded"] = True
+    if nickname is not None:
+        member["nickname"] = nickname.strip() or None
+    if email is not None:
+        member["email"] = email.strip() or None
+    if email_opt_in is not None:
+        member["email_opt_in"] = email_opt_in
     store.save_user(u)
     return {"member": member}
 
@@ -540,7 +601,9 @@ def remove_family_member(family_id: str, user_id: str = "demo") -> dict:
 def resolve_family_token(token: str) -> dict:
     """Resolve a family member's private record-page token to their
     user_id and own record -- the record page has no other way to know
-    who they are or who they're recording for."""
+    who they are or who they're recording for. The record page shows the
+    first-visit welcome/setup screen when onboarded is false, and skips
+    straight to suggestions/recording once it's true."""
     user_id, member = store.find_family_member(token)
     if not user_id:
         return {"error": "Invalid or expired link."}
@@ -562,77 +625,204 @@ def upcoming_milestones(user_id: str = "demo", on_date: str | None = None) -> di
     return {"upcoming": items}
 
 
+_ANYTIME_SCRIPTS = [
+    "Keep going, I'm so proud of you.",
+    "Hope you're having a beautiful day.",
+    "Way to go playing all the games today!",
+]
+_ACTIVITY_SCRIPTS = {
+    "walk": "I hope you have a nice walk!",
+    "bike": "I hope you have a nice bike ride!",
+    "stationary_bike": "Enjoy your ride!",
+    "gardening": "Have fun out in the garden!",
+    "dancing": "Dance like nobody's watching!",
+    "swimming": "Enjoy your swim!",
+    "stretch": "Enjoy your stretching!",
+    "meditation": "Enjoy your meditation, {called}.",
+}
+
+
 @mcp.tool()
-def save_cheer(family_id: str, media_type: str, file: str, user_id: str = "demo", milestone_id: str | None = None, storage: str = "local", on_date: str | None = None) -> dict:
-    """Register a cheer that's already been uploaded. file is its saved
-    filename (local) or S3 object key (storage='s3'). If milestone_id is
-    given and already earned, the cheer is queued to play next time the app
-    opens, since the moment of earning it has already passed; otherwise it
-    plays the moment that milestone is newly earned."""
+def get_cheer_prompts(user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Ready-made cheer scripts for the family link page: one per milestone
+    the person is close to ('coming_up', tagged to that milestone), three
+    fixed 'anytime' lines, and one per activity type they actually do
+    ('activity', tagged to that activity type) -- generated from their
+    real data so every suggestion is genuinely relevant."""
+    u = store.get_user(user_id)
+    day = _today(on_date)
+    called = u["name"].split()[0]
+
+    coming_up = [
+        {"cheer_type": "milestone", "target": m["id"], "script": f"Congrats on your {m['title'].lower()}!", "note": f"{called} is {m['distance_label']}"}
+        for m in progress.upcoming(u, day)
+    ]
+    anytime = [{"cheer_type": "anytime", "target": None, "script": s} for s in _ANYTIME_SCRIPTS]
+    counts = Counter(a["type"] for a in u["activities"])
+    activity = [
+        {"cheer_type": "activity", "target": t, "script": _ACTIVITY_SCRIPTS.get(t, f"Enjoy your {t.replace('_', ' ')}, {called}!").format(called=called)}
+        for t, _ in counts.most_common(3)
+        if t not in {"memory_game", "matching_game", "saying_game", "category_game"}
+    ]
+    return {"coming_up": coming_up, "anytime": anytime, "activity": activity}
+
+
+def _initial_cheer_status(user: dict, cheer_type: str, target: str | None) -> str:
+    if cheer_type == "milestone":
+        return "unlocked" if target in {m["id"] for m in user["milestones"]} else "locked"
+    if cheer_type == "activity":
+        return "unlocked" if any(a["type"] == target for a in user["activities"]) else "locked"
+    return "locked"  # anytime: unlocks on the person's next completed activity
+
+
+@mcp.tool()
+def add_cheer(family_id: str, media_type: str, file: str, duration_seconds: float, user_id: str = "demo",
+              cheer_type: str = "anytime", target: str | None = None, photo_file: str | None = None,
+              storage: str = "local", on_date: str | None = None) -> dict:
+    """Register a cheer that's already been uploaded. cheer_type is
+    'milestone' (target is a milestone id), 'activity' (target is an
+    activity type), or 'anytime' (no target). file is the saved filename
+    (local) or S3 object key (storage='s3'); photo_file likewise for a
+    'voice + photo' cheer's picture. Rejects anything over 15 seconds.
+    Starts locked unless its condition is already true (the milestone's
+    already earned, or this is an activity cheer for something already
+    logged) -- otherwise it unlocks the moment that happens."""
+    if duration_seconds > family.MAX_CHEER_SECONDS + 1:  # +1s grace for encoder/clock rounding
+        return {"error": f"Cheers are {family.MAX_CHEER_SECONDS} seconds max."}
+    if cheer_type not in ("milestone", "activity", "anytime"):
+        return {"error": "cheer_type must be 'milestone', 'activity', or 'anytime'."}
     u = store.get_user(user_id)
     members = u.get("family", [])
     member = next((m for m in members if m["id"] == family_id), None)
-    already_earned = bool(milestone_id) and milestone_id in {m["id"] for m in u["milestones"]}
     cheer = {
         "id": family.new_id(),
         "family_id": family_id,
-        "family_name": member["name"] if member else "Someone",
-        "milestone_id": milestone_id,
+        "family_name": family.display_name(member, u["name"].split()[0]),
+        "cheer_type": cheer_type,
+        "target": target,
         "media_type": media_type,
         "file": file,
+        "photo_file": photo_file,
         "storage": storage,
+        "duration_seconds": duration_seconds,
         "recorded_on": _today(on_date).isoformat(),
-        "queued": already_earned,
-        "played": False,
+        "activities_at_recording": len(u["activities"]),
+        "status": _initial_cheer_status(u, cheer_type, target),
+        "played_on": None,
     }
     u.setdefault("cheers", [])
     u["cheers"].append(cheer)
     store.save_user(u)
     cheer["url"] = family.cheer_media_url(cheer)
-    return {"cheer": cheer}
+    cheer["photo_url"] = family.cheer_photo_url(cheer)
+    return {"cheer": cheer, "sent_count": len(u["cheers"]), "goal": family.CHEER_GOAL}
 
 
 @mcp.tool()
-def list_cheers(user_id: str = "demo", milestone_id: str | None = None, unplayed_only: bool = False, queued_only: bool = False) -> dict:
-    """List saved cheers, optionally filtered to one milestone (or null for
-    the 'anytime' bank), only unplayed ones, and/or only queued ones (cheers
-    recorded after their milestone was already earned, waiting for the next
-    app open)."""
+def list_cheers(user_id: str = "demo", status: str | None = None, cheer_type: str | None = None, target: str | None = None, family_id: str | None = None) -> dict:
+    """List this person's cheers, optionally filtered by status
+    ('locked'/'unlocked'/'played'), cheer_type, target, and/or family_id.
+    Each cheer includes a fresh playback url (and photo_url, if any) when
+    stored in S3."""
     u = store.get_user(user_id)
     cheers = u.get("cheers", [])
-    if milestone_id is not None:
-        cheers = [c for c in cheers if c["milestone_id"] == milestone_id]
-    if unplayed_only:
-        cheers = [c for c in cheers if not c["played"]]
-    if queued_only:
-        cheers = [c for c in cheers if c["queued"]]
+    if status is not None:
+        cheers = [c for c in cheers if c["status"] == status]
+    if cheer_type is not None:
+        cheers = [c for c in cheers if c["cheer_type"] == cheer_type]
+    if target is not None:
+        cheers = [c for c in cheers if c["target"] == target]
+    if family_id is not None:
+        cheers = [c for c in cheers if c["family_id"] == family_id]
     for c in cheers:
         c["url"] = family.cheer_media_url(c)
+        c["photo_url"] = family.cheer_photo_url(c)
     return {"cheers": cheers}
 
 
 @mcp.tool()
-def get_cheer(cheer_id: str, user_id: str = "demo") -> dict:
-    """Fetch one saved cheer by id."""
+def next_cheer(user_id: str = "demo", on_date: str | None = None) -> dict:
+    """The next unlocked cheer due to actually play -- for a milestone
+    moment, a workout's step-break pause, or the home shelf -- respecting
+    the daily cap (VERA_MAX_CHEERS_PER_DAY, default 2) and rotating across
+    family members so one person's cheers don't all play in a row. Returns
+    {"cheer": null} if nothing's due right now."""
     u = store.get_user(user_id)
-    cheer = next((c for c in u.get("cheers", []) if c["id"] == cheer_id), None)
-    if not cheer:
-        return {"error": "Cheer not found."}
-    cheer["url"] = family.cheer_media_url(cheer)
-    return {"cheer": cheer}
+    day = _today(on_date)
+    played_today = [c for c in u.get("cheers", []) if c["status"] == "played" and c.get("played_on") == day.isoformat()]
+    if len(played_today) >= MAX_CHEERS_PER_DAY:
+        return {"cheer": None}
+    unlocked = sorted((c for c in u.get("cheers", []) if c["status"] == "unlocked"), key=lambda c: c["recorded_on"])
+    if not unlocked:
+        return {"cheer": None}
+    last_family_id = played_today[-1]["family_id"] if played_today else None
+    pick = next((c for c in unlocked if c["family_id"] != last_family_id), unlocked[0])
+    pick["url"] = family.cheer_media_url(pick)
+    pick["photo_url"] = family.cheer_photo_url(pick)
+    return {"cheer": pick}
 
 
 @mcp.tool()
-def mark_cheer_played(cheer_id: str, user_id: str = "demo") -> dict:
-    """Mark a cheer as played, so it isn't shown again."""
+def mark_cheer_played(cheer_id: str, user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Mark a cheer as played, so it moves from the shelf's unlocked list
+    to the replayable 'played' list and next_cheer won't offer it again."""
     u = store.get_user(user_id)
     found = False
     for c in u.get("cheers", []):
         if c["id"] == cheer_id:
-            c["played"] = True
+            c["status"] = "played"
+            c["played_on"] = _today(on_date).isoformat()
             found = True
     store.save_user(u)
     return {"ok": found}
+
+
+@mcp.tool()
+def delete_cheer(cheer_id: str, user_id: str = "demo") -> dict:
+    """Delete a cheer (available to the user or the caregiver)."""
+    u = store.get_user(user_id)
+    before = len(u.get("cheers", []))
+    u["cheers"] = [c for c in u.get("cheers", []) if c["id"] != cheer_id]
+    store.save_user(u)
+    return {"deleted": len(u["cheers"]) < before}
+
+
+@mcp.tool()
+def check_family_alerts(user_id: str = "demo") -> dict:
+    """Family members whose unlocked-cheer queue just dropped to 1 or 0 and
+    haven't been emailed at this level yet (email_opt_in required). Call
+    mark_alert_sent right after actually sending, so it isn't repeated."""
+    u = store.get_user(user_id)
+    called = u["name"].split()[0]
+    alerts = []
+    for m in u.get("family", []):
+        if not (m.get("email") and m.get("email_opt_in")):
+            continue
+        unplayed = sum(1 for c in u.get("cheers", []) if c["family_id"] == m["id"] and c["status"] == "unlocked")
+        if unplayed <= 1 and m.get("low_queue_notified_at") != unplayed:
+            nickname = family.display_name(m, called)
+            alerts.append({
+                "family_id": m["id"],
+                "email": m["email"],
+                "token": m["token"],
+                "unplayed": unplayed,
+                "message": f"{nickname} has heard your cheers! You have {unplayed} left in the queue. Record another?",
+            })
+    return {"alerts": alerts}
+
+
+@mcp.tool()
+def mark_alert_sent(family_id: str, unplayed: int, user_id: str = "demo") -> dict:
+    """Record that a running-low alert was just sent at this unplayed
+    count, so check_family_alerts doesn't repeat it until the count changes
+    again."""
+    u = store.get_user(user_id)
+    member = next((m for m in u.get("family", []) if m["id"] == family_id), None)
+    if not member:
+        return {"ok": False}
+    member["low_queue_notified_at"] = unplayed
+    store.save_user(u)
+    return {"ok": True}
 
 
 def build_app():

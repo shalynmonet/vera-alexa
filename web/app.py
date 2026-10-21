@@ -19,9 +19,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from vera import cloud_storage
-from vera.family import cheer_s3_key
+from vera.family import MAX_CHEER_SECONDS, cheer_s3_key
 
-from . import mcp_bridge, polly_tts, ses_email
+from . import mcp_bridge, polly_tts, ses_email, sms
 
 try:
     from . import bedrock_chat
@@ -33,6 +33,7 @@ PORT = int(os.environ.get("WEB_PORT", "8080"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CHEER_MEDIA_DIR = Path(__file__).resolve().parent / "cheer_media"
 CHEER_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+MAX_CHEER_BYTES = 20 * 1024 * 1024  # generous for a 15 second clip; rejects anything clearly wrong
 
 class NoCacheStaticFiles(StaticFiles):
     """Static files change constantly during development/demos; without an
@@ -117,7 +118,7 @@ async def caregiver_dashboard_page(user_id: str):
 
 
 @app.get("/api/cheer/context/{token}")
-async def api_cheer_context(token: str, milestone: str | None = None):
+async def api_cheer_context(token: str):
     try:
         resolved = await mcp_bridge.call_tool("resolve_family_token", {"token": token})
         if "error" in resolved:
@@ -125,15 +126,17 @@ async def api_cheer_context(token: str, milestone: str | None = None):
         user_id = resolved["user_id"]
         member = resolved["member"]
         profile = await mcp_bridge.call_tool("get_profile", {"user_id": user_id})
-        upcoming = await mcp_bridge.call_tool("upcoming_milestones", {"user_id": user_id})
+        prompts = await mcp_bridge.call_tool("get_cheer_prompts", {"user_id": user_id})
+        sent = await mcp_bridge.call_tool("list_cheers", {"user_id": user_id, "family_id": member["id"]})
     except mcp_bridge.ToolError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {
         "valid": True,
         "recipient_name": profile["name"],
-        "family_name": member["name"],
-        "upcoming_milestones": upcoming["upcoming"],
-        "default_milestone_id": milestone,
+        "member": member,
+        "prompts": prompts,
+        "sent_count": len(sent["cheers"]),
+        "goal": 5,
     }
 
 
@@ -142,8 +145,13 @@ async def api_cheer_upload(
     token: str,
     file: UploadFile = File(...),
     media_type: str = Form(...),
-    milestone_id: str | None = Form(None),
+    duration_seconds: float = Form(...),
+    cheer_type: str = Form("anytime"),
+    target: str | None = Form(None),
+    photo: UploadFile | None = File(None),
 ):
+    if duration_seconds > MAX_CHEER_SECONDS + 1:
+        raise HTTPException(status_code=400, detail=f"Cheers are {MAX_CHEER_SECONDS} seconds max.")
     try:
         resolved = await mcp_bridge.call_tool("resolve_family_token", {"token": token})
     except mcp_bridge.ToolError as e:
@@ -153,14 +161,24 @@ async def api_cheer_upload(
     user_id = resolved["user_id"]
     member = resolved["member"]
 
-    filename = f"{uuid.uuid4().hex}.webm"
     content = await file.read()
+    if len(content) > MAX_CHEER_BYTES:
+        raise HTTPException(status_code=400, detail="That recording is too large.")
+    photo_content = await photo.read() if photo else None
+    if photo_content and len(photo_content) > MAX_CHEER_BYTES:
+        raise HTTPException(status_code=400, detail="That photo is too large.")
+
+    ext = "mp4" if media_type == "video" else "webm"
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    photo_filename = f"{uuid.uuid4().hex}.jpg" if photo_content else None
 
     storage = "local"
     if cloud_storage.enabled():
         try:
-            content_type = file.content_type or ("video/webm" if media_type == "video" else "audio/webm")
+            content_type = file.content_type or (f"video/{ext}" if media_type == "video" else f"audio/{ext}")
             await run_in_threadpool(cloud_storage.upload_bytes, cheer_s3_key(filename), content, content_type)
+            if photo_content:
+                await run_in_threadpool(cloud_storage.upload_bytes, cheer_s3_key(photo_filename), photo_content, photo.content_type or "image/jpeg")
             storage = "s3"
         except Exception:
             # S3 unreachable or misconfigured -- fall back to local disk
@@ -168,14 +186,19 @@ async def api_cheer_upload(
             storage = "local"
     if storage == "local":
         (CHEER_MEDIA_DIR / filename).write_bytes(content)
+        if photo_content:
+            (CHEER_MEDIA_DIR / photo_filename).write_bytes(photo_content)
 
     try:
-        result = await mcp_bridge.call_tool("save_cheer", {
+        result = await mcp_bridge.call_tool("add_cheer", {
             "family_id": member["id"],
             "media_type": media_type,
             "file": filename,
+            "duration_seconds": duration_seconds,
             "user_id": user_id,
-            "milestone_id": milestone_id or None,
+            "cheer_type": cheer_type,
+            "target": target or None,
+            "photo_file": photo_filename,
             "storage": storage,
         })
     except mcp_bridge.ToolError as e:
@@ -185,16 +208,18 @@ async def api_cheer_upload(
 
 @app.post("/api/cheer/notify")
 async def api_cheer_notify(payload: dict, request: Request):
-    """Best-effort SES email nudge; copying the record link always works
-    regardless of whether this succeeds."""
+    """Best-effort "almost there" nudge (email now; SMS too, once
+    VERA_SMS_ENABLED is on and the family member has a phone on file) --
+    copying the record link always works regardless of whether this
+    succeeds."""
     user_id = payload.get("user_id", "demo")
     family_id = payload.get("family_id")
     milestone_id = payload.get("milestone_id")
 
     family_res = await mcp_bridge.call_tool("list_family", {"user_id": user_id})
     member = next((m for m in family_res["family"] if m["id"] == family_id), None)
-    if not member or not member.get("email"):
-        raise HTTPException(status_code=400, detail="This family member has no email on file.")
+    if not member:
+        raise HTTPException(status_code=404, detail="Family member not found.")
 
     nudge_text = f"Vera would love a cheer from you for {user_id}!"
     if milestone_id:
@@ -208,11 +233,46 @@ async def api_cheer_notify(payload: dict, request: Request):
         link += f"?milestone={milestone_id}"
     body = f"{nudge_text}\n\nRecord your cheer here: {link}"
 
-    try:
-        await run_in_threadpool(ses_email.send_nudge_email, member["email"], "A cheer for your family member", body)
-    except ses_email.EmailError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    return {"sent": True}
+    sent_email = sent_sms = False
+    errors = []
+    if member.get("email"):
+        try:
+            await run_in_threadpool(ses_email.send_nudge_email, member["email"], "A cheer for your family member", body)
+            sent_email = True
+        except ses_email.EmailError as e:
+            errors.append(str(e))
+    if sms.enabled() and member.get("phone"):
+        try:
+            await run_in_threadpool(sms.send_nudge_sms, member["phone"], body)
+            sent_sms = True
+        except sms.SMSError as e:
+            errors.append(str(e))
+
+    if not sent_email and not sent_sms:
+        raise HTTPException(status_code=502, detail="; ".join(errors) or "No email or phone on file, and SMS isn't enabled.")
+    return {"sent_email": sent_email, "sent_sms": sent_sms}
+
+
+@app.post("/api/family/check_alerts")
+async def api_family_check_alerts(payload: dict, request: Request):
+    """Runs on caregiver dashboard load (this app has no background job
+    runner): sends a one-time "running low" email to any family member
+    whose unlocked-cheer queue just dropped to 1 or 0, then marks it sent
+    so it isn't repeated. Best-effort -- a failed send just gets retried
+    next time the dashboard loads."""
+    user_id = payload.get("user_id", "demo")
+    alerts = (await mcp_bridge.call_tool("check_family_alerts", {"user_id": user_id}))["alerts"]
+    sent = []
+    for a in alerts:
+        link = f"{str(request.base_url).rstrip('/')}/cheer/{a['token']}"
+        body = f"{a['message']}\n\nRecord one here: {link}"
+        try:
+            await run_in_threadpool(ses_email.send_nudge_email, a["email"], "Your cheers are running low", body)
+        except ses_email.EmailError:
+            continue
+        await mcp_bridge.call_tool("mark_alert_sent", {"family_id": a["family_id"], "unplayed": a["unplayed"], "user_id": user_id})
+        sent.append(a["family_id"])
+    return {"sent": sent}
 
 
 # Mounted before the catch-all "/" static mount below so cached audio and

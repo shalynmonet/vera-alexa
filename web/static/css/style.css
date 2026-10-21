@@ -433,6 +433,27 @@ html, body {
   margin-bottom: 20px;
 }
 
+#family-shelf { width: 100%; max-width: 980px; margin-top: 18px; }
+
+.family-shelf-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.family-shelf-card {
+  flex: 1 1 220px;
+  min-height: auto;
+  padding: 18px 20px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.family-shelf-card.played { background: var(--bg); color: var(--ink-soft); }
+.family-shelf-card.locked { cursor: default; color: var(--ink-soft); font-weight: 500; }
+.family-shelf-card.locked:hover { transform: none; box-shadow: 0 6px 18px rgba(51, 40, 31, 0.07); }
+
 .engagement-list {
   display: flex;
   flex-direction: column;
@@ -685,6 +706,15 @@ html, body {
   color: var(--ink);
   font-size: 1.8rem;
   margin: 0 0 6px;
+}
+
+#cheer-photo {
+  width: 100%;
+  max-width: 400px;
+  max-height: 320px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  margin-bottom: 14px;
 }
 
 #cheer-video {
