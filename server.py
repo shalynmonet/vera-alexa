@@ -517,12 +517,12 @@ def upcoming_milestones(user_id: str = "demo", on_date: str | None = None) -> di
 
 
 @mcp.tool()
-def save_cheer(family_id: str, media_type: str, file: str, user_id: str = "demo", milestone_id: str | None = None, on_date: str | None = None) -> dict:
-    """Register a cheer that's already been uploaded (file is its saved
-    filename). If milestone_id is given and already earned, the cheer is
-    queued to play next time the app opens, since the moment of earning it
-    has already passed; otherwise it plays the moment that milestone is
-    newly earned."""
+def save_cheer(family_id: str, media_type: str, file: str, user_id: str = "demo", milestone_id: str | None = None, storage: str = "local", on_date: str | None = None) -> dict:
+    """Register a cheer that's already been uploaded. file is its saved
+    filename (local) or S3 object key (storage='s3'). If milestone_id is
+    given and already earned, the cheer is queued to play next time the app
+    opens, since the moment of earning it has already passed; otherwise it
+    plays the moment that milestone is newly earned."""
     u = store.get_user(user_id)
     members = u.get("family", [])
     member = next((m for m in members if m["id"] == family_id), None)
@@ -534,6 +534,7 @@ def save_cheer(family_id: str, media_type: str, file: str, user_id: str = "demo"
         "milestone_id": milestone_id,
         "media_type": media_type,
         "file": file,
+        "storage": storage,
         "recorded_on": _today(on_date).isoformat(),
         "queued": already_earned,
         "played": False,
@@ -541,6 +542,7 @@ def save_cheer(family_id: str, media_type: str, file: str, user_id: str = "demo"
     u.setdefault("cheers", [])
     u["cheers"].append(cheer)
     store.save_user(u)
+    cheer["url"] = family.cheer_media_url(cheer)
     return {"cheer": cheer}
 
 
@@ -558,6 +560,8 @@ def list_cheers(user_id: str = "demo", milestone_id: str | None = None, unplayed
         cheers = [c for c in cheers if not c["played"]]
     if queued_only:
         cheers = [c for c in cheers if c["queued"]]
+    for c in cheers:
+        c["url"] = family.cheer_media_url(c)
     return {"cheers": cheers}
 
 
@@ -568,6 +572,7 @@ def get_cheer(cheer_id: str, user_id: str = "demo") -> dict:
     cheer = next((c for c in u.get("cheers", []) if c["id"] == cheer_id), None)
     if not cheer:
         return {"error": "Cheer not found."}
+    cheer["url"] = family.cheer_media_url(cheer)
     return {"cheer": cheer}
 
 

@@ -124,7 +124,7 @@ function showCheerOverlay(cheer) {
     videoEl.classList.toggle("hidden", !isVideo);
     audioEl.classList.toggle("hidden", isVideo);
     const mediaEl = isVideo ? videoEl : audioEl;
-    mediaEl.src = `/cheer-media/${cheer.file}`;
+    mediaEl.src = cheer.url || `/cheer-media/${cheer.file}`;
     overlay.classList.remove("hidden");
     mediaEl.play().catch(() => {});
 

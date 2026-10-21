@@ -33,7 +33,7 @@ def _empty_user(user_id: str, name: str | None = None) -> dict[str, Any]:
         "game": None,          # in-progress memory game
         "memories": [],        # {"fact", "recorded_on", "category"}
         "family": [],          # {"id", "name", "relationship", "email", "token"}
-        "cheers": [],          # {"id", "family_id", "family_name", "milestone_id", "media_type", "file", "recorded_on", "queued", "played"}
+        "cheers": [],          # {"id", "family_id", "family_name", "milestone_id", "media_type", "file", "storage", "recorded_on", "queued", "played"}
     }
 
 

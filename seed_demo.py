@@ -2,14 +2,51 @@
 and badges look alive on camera. Leaves today empty so a milestone can be
 earned live during the demo video.
 
+Also seeds one family member (a grandson, "Jake") with a cheer already
+recorded and attached to the 7 Day Streak badge -- so the demo can show the
+whole Family Cheers loop: finish today's session live, watch the streak
+badge land, and have Vera immediately play Jake's cheer for it.
+
 Run:  python seed_demo.py            (name defaults to "Rose")
       python seed_demo.py --name Evelyn
 """
 import argparse
+import math
+import struct
+import wave
 from datetime import date, timedelta
+from pathlib import Path
 
-from vera import progress
+from vera import family, progress
 from vera.storage import Store
+
+CHEER_MEDIA_DIR = Path(__file__).resolve().parent / "web" / "cheer_media"
+
+
+def _make_placeholder_cheer_audio(path: Path) -> None:
+    """A short, gentle two-note chime standing in for a real family
+    recording, so the seeded demo has something to actually play."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    framerate = 22050
+    seconds = 1.6
+    amplitude = 6000
+    notes = [523.25, 659.25]  # a friendly little C-E chime
+    n_frames = int(framerate * seconds)
+    frames = bytearray()
+    for i in range(n_frames):
+        t = i / framerate
+        freq = notes[0] if t < seconds / 2 else notes[1]
+        # fade in/out a touch so it doesn't click at the edges
+        fade = min(1.0, (seconds / 2 - abs(t - seconds / 4)) * 8) if t < seconds / 2 else \
+            min(1.0, (seconds / 2 - abs(t - (seconds / 4 + seconds / 2))) * 8)
+        sample = int(amplitude * max(0.0, min(1.0, fade)) * math.sin(2 * math.pi * freq * t))
+        frames += struct.pack("<h", sample)
+    with wave.open(str(path), "w") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(framerate)
+        f.writeframes(bytes(frames))
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--name", default="Rose")
@@ -37,7 +74,33 @@ for ago in sorted(pattern, reverse=True):
         user["activities"].append({"type": t, "date": d.isoformat(), "minutes": minutes[t], "details": details})
     progress.check_milestones(user, d)  # award badges on the day they were earned
 
+member = {
+    "id": family.new_id(),
+    "name": "Jake",
+    "relationship": "Grandson",
+    "email": None,
+    "token": family.new_token(),
+}
+user["family"] = [member]
+
+cheer_filename = f"{family.new_id()}.wav"
+_make_placeholder_cheer_audio(CHEER_MEDIA_DIR / cheer_filename)
+user["cheers"] = [{
+    "id": family.new_id(),
+    "family_id": member["id"],
+    "family_name": member["name"],
+    "milestone_id": "streak_7",
+    "media_type": "audio",
+    "file": cheer_filename,
+    "storage": "local",
+    "recorded_on": (today - timedelta(days=1)).isoformat(),
+    "queued": False,
+    "played": False,
+}]
+
 store.save_user(user)
 s = progress.streaks(user["activities"], today)
 print(f"Seeded {args.name}: {len(user['activities'])} sessions, current streak {s['current']}, "
       f"badges {[m['title'] for m in user['milestones']]}")
+print(f"Family: Jake is one cheer away from celebrating {args.name}'s 7 Day Streak -- "
+      "finish one more session today to see it play.")

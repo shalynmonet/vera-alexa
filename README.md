@@ -1,12 +1,46 @@
 # Vera
 
-A warm wellness companion for older adults, built for Alexa+. Vera keeps minds and bodies busy with four games, guided exercise routines, and guided meditation, and celebrates progress with a visual fitness log of streaks and milestones. Caregivers get a simple daily summary.
+A warm wellness companion for older adults, built for Alexa+. Vera keeps minds and bodies busy with four games, guided exercise routines, and guided meditation, and celebrates progress with a visual fitness log of streaks and milestones. Family members can leave her short audio/video cheers to play at just the right moment, and caregivers get a simple daily summary.
 
-Vera is named after my late great-grandmother and inspired by caring for my grandmother.
+Vera is named after my late great-grandmother and inspired by caring for my grandmother -- specifically, by how much of caregiving is just noticing: did she move today, did she eat, is she lonely, is anyone keeping track. I built Vera to be the thing quietly keeping track, so a family doesn't have to ask about it every day, and so the person at the center of it all gets encouragement instead of a checklist.
 
-## How it works
+**On Alexa+, Vera uses the customer's Amazon account identity automatically** -- there are no accounts, logins, or passwords anywhere in this app. A household's Alexa+ voice profiles map onto Vera's own per-person profiles; a family member's cheer-recording link works from a single private, unguessable URL, nothing to sign into.
 
-Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the open standard behind Alexa+ integrations. An Alexa+ experience (or the included web simulator) calls Vera's tools to run sessions and read progress.
+## Architecture
+
+```
+  Alexa+ (voice, on-device identity)  ───┐
+                                          │  MCP tools, Streamable HTTP
+  Web simulator (browser, dev/demo)  ────┤  (same tools, either caller)
+                                          ▼
+                     ┌────────────────────────────────────┐
+                     │          Vera MCP Server            │
+                     │            (server.py)              │
+                     │  games · fitness log · memories ·   │
+                     │  milestones · family cheers          │
+                     └─────────────┬──────────────┬────────┘
+                                   │              │
+                          data/vera.json    presigned URLs
+                           (JSON store)            │
+                                                    ▼
+                                           ┌─────────────────┐
+                                           │    Amazon S3     │
+                                           │ (media, cheers)  │
+                                           └─────────────────┘
+
+  The web simulator also calls these directly, standing in for what
+  Alexa+ provides natively on-device:
+
+    Amazon Bedrock (Nova Lite) -- conversational tool-use loop, greeting
+    Amazon Polly               -- text to speech
+    Amazon SES                 -- optional caregiver nudge emails
+```
+
+Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the open standard behind Alexa+ integrations. In production, Alexa+ calls the MCP server's tools directly, using its own voice recognition, text to speech, and language model -- Vera never has to know any of that is happening.
+
+The included **web simulator** (`web/app.py`) exists so this could be built and demoed before any real Alexa+ integration: it plays the part of Alexa+ in the browser, recreating that pipeline locally with Amazon Bedrock (Nova Lite, for the conversational tool-use loop and the proactive greeting) and Amazon Polly (for speech). It's a development and demo harness, not a second product -- every feature it shows off is really just calling the same MCP tools Alexa+ would call.
+
+## MCP Tools
 
 | Tool | What it does |
 |---|---|
@@ -71,7 +105,7 @@ greeting from Day 2.
 
 ### Exercise and meditation media
 
-Real videos and audio live in `web/static/media/exercise/` and `web/static/media/meditations/`, each described by a hand-edited `manifest.json` alongside the files (title, minutes, file, thumbnail, and for exercise, narration steps). `vera/media.py` checks whether each manifest entry's file actually exists and reports it as `available`, so a routine with no recording yet simply shows a friendly "coming soon" card -- no code change needed once the real file is dropped in with the filename the manifest expects. The four exercise routines (chair stretch, seated strength, balance, gentle walking) ship as narration-only placeholders today; meditations are built from whatever real files are already in the folder (currently one: "Healing Affirmations").
+Real videos and audio are described by a hand-edited `manifest.json` next to each category (title, minutes, file, thumbnail, and for exercise, narration steps). `vera/media.py` resolves each manifest entry's file to a playable URL -- from the S3 bucket if one's configured and the file has been uploaded there, otherwise from local disk -- and reports the routine as `available` only once the file actually exists somewhere, so a routine with no recording yet simply shows a friendly "coming soon" card. No code change is needed either way: drop the file in locally, or upload it to the bucket, with the exact filename the manifest expects. The four exercise routines (chair stretch, seated strength, balance, gentle walking) ship as narration-only placeholders today; meditations are built from whatever real files already exist (currently one: "Healing Affirmations"). See [Media storage](#media-storage-local-vs-s3) below for the folder/bucket layout.
 
 ### Logging any activity, three ways
 
@@ -114,6 +148,50 @@ milestone that was already earned before it was recorded has missed that
 moment, so it's queued instead and plays at the next app open ("You have a
 message from Jake"), right after the proactive greeting.
 
+A recorded cheer uploads straight to S3 when a bucket is configured (and
+falls back to local disk if that upload fails, so a recording is never
+lost over a flaky connection); `list_cheers`/`get_cheer` hand back a fresh
+presigned `url` for an S3 cheer, or nothing for a local one, in which case
+the frontend already knows to fall back to `/cheer-media/<file>`. This
+matters beyond tidiness: a cloud-hosted MCP server's local disk doesn't
+survive a redeploy or scale past one instance, so in that environment S3
+is the only place a recording reliably lives.
+
+## Media storage: local vs. S3
+
+Local layout (always works, no AWS needed):
+
+```
+web/static/media/
+  exercise/manifest.json + the video files it names
+  meditations/manifest.json + the audio/video files it names
+web/cheer_media/            (gitignored; cheers land here when S3 isn't configured)
+```
+
+S3 layout, once `VERA_S3_BUCKET` is set (optionally under `VERA_S3_PREFIX`):
+
+```
+<bucket>/<prefix>/media/exercise/<filename>       -- same filenames as the local manifest
+<bucket>/<prefix>/media/meditations/<filename>
+<bucket>/<prefix>/cheers/<generated-filename>.webm -- written automatically on upload
+```
+
+`vera/media.py` and `vera/family.py`'s `cheer_media_url` check the bucket first (a cached `HEAD` per filename) and fall back to the local path if the file isn't there, so you can upload routines to S3 one at a time without breaking the ones you haven't gotten to yet. To upload the exercise/meditation media once you have real recordings:
+
+```powershell
+aws s3 sync web/static/media s3://your-bucket-name/media
+```
+
+## AWS services used
+
+| Service | Role in Vera |
+|---|---|
+| **Bedrock** (Amazon Nova Lite) | Powers the web simulator's conversational tool-use loop -- free-form chat, the proactive greeting, and deciding which MCP tool to call. On real Alexa+, this role is played by Alexa+'s own model; Vera's MCP tools don't change. |
+| **Polly** | Text to speech for the web simulator's voice (neural engine, a slightly slower SSML rate for older ears), with disk caching. Alexa+ handles this natively in production. |
+| **S3** | Optional storage for exercise/meditation videos and Family Cheers recordings, served back out via presigned URLs so the bucket can stay private. Required (not just nice to have) once the MCP server runs somewhere its local disk doesn't persist, like App Runner. |
+| **App Runner** | Hosts the MCP server itself (`server.py`) with a public HTTPS endpoint, built straight from this GitHub repo -- see [Deploying to AWS App Runner](#deploying-the-mcp-server-to-aws-app-runner). |
+| **SES** | Optional: lets the caregiver dashboard email a family member their cheer-recording nudge directly, instead of only copying the link. Sandbox mode by default (sender and every recipient must be verified). |
+
 ## Run it (Windows PowerShell)
 
 ```powershell
@@ -153,6 +231,44 @@ Includes an end to end test that starts the server and calls every core tool thr
 | `VERA_DATA` | `data/vera.json` | JSON store |
 | `VERA_CORS_ORIGINS` | `*` | Lock down for production |
 | `VERA_SES_FROM_EMAIL` | *(none)* | Verified sender for optional email nudges; without it, emailing a nudge fails (copying the record link still always works) |
+| `VERA_S3_BUCKET` | *(none)* | Enables S3 storage for media/cheers; without it, everything falls back to local disk |
+| `VERA_S3_PREFIX` | *(none)* | Optional key prefix inside the bucket |
+| `AWS_REGION` | `us-east-1` | Region for S3 (and Bedrock/Polly/SES, in the web simulator) |
+
+## Deploying the MCP server to AWS App Runner
+
+The MCP server (`server.py`) is what Alexa+ -- or anything else speaking MCP -- actually talks to, so it's the piece that needs a public HTTPS endpoint. The web simulator stays local (or wherever you run it), pointed at that endpoint via `VERA_MCP_URL`.
+
+This repo includes an `apprunner.yaml` so App Runner can build and run it with no Dockerfile:
+
+```yaml
+version: 1.0
+runtime: python311
+build:
+  commands:
+    build:
+      - pip install -r requirements.txt
+run:
+  command: python server.py
+  network:
+    port: 8000
+  env:
+    - name: VERA_HOST
+      value: "0.0.0.0"
+```
+
+Steps (AWS Console):
+
+1. Push this repo to GitHub.
+2. **App Runner > Create service > Source code repository**, connect your GitHub account, pick this repo and branch.
+3. Deployment trigger: **Automatic** deploys a new version on every push to the branch.
+4. Build settings: choose **Use a configuration file** (it'll find `apprunner.yaml`), or configure manually -- runtime Python 3, build command `pip install -r requirements.txt`, start command `python server.py`, port `8000`.
+5. Add any environment variables you need beyond the ones in `apprunner.yaml`: `VERA_CORS_ORIGINS` (lock this down to your web simulator's origin instead of `*` once you have one), and, if you want S3-backed media/cheers, `VERA_S3_BUCKET` / `VERA_S3_PREFIX` / `AWS_REGION`.
+6. If you're using S3, attach an instance role granting `s3:GetObject` and `s3:HeadObject` on that bucket -- that's all the deployed server needs, since it only ever reads (uploading cheer recordings happens from wherever the web simulator runs, not from App Runner).
+7. Create the service. App Runner builds, deploys, and gives you a public `https://<random-id>.<region>.awsapprunner.com` URL -- the MCP endpoint is that URL plus `/mcp`.
+8. Point anything that should talk to it (the web simulator, MCP Inspector) at `VERA_MCP_URL=https://<your-service>.awsapprunner.com/mcp`.
+
+**Known limitation:** `data/vera.json` is a local JSON file, which is fine for a single always-on App Runner instance but won't survive a redeploy, and won't be shared if you scale past one instance. `vera/storage.py`'s `Store` class is a narrow, three-method interface (`get_user`/`save_user`/`list_users`/...) specifically so swapping it for DynamoDB later wouldn't touch any tool's logic -- just not done here, to keep this a one-file, zero-infrastructure demo.
 
 ## Web simulator
 
@@ -200,18 +316,34 @@ pip install -r requirements.txt
 python -m web.app   # http://127.0.0.1:8080
 ```
 
-Configuration (env vars): `VERA_MCP_URL` (default `http://127.0.0.1:8000/mcp`),
+Configuration (env vars): `VERA_MCP_URL` (default `http://127.0.0.1:8000/mcp`;
+point this at your App Runner URL's `/mcp` once it's deployed),
 `WEB_HOST` / `WEB_PORT` (default `127.0.0.1:8080`), `VERA_BEDROCK_MODEL_ID`
 (default `us.amazon.nova-lite-v1:0`), `VERA_POLLY_VOICE` (default `Ruth`),
 `VERA_POLLY_ENGINE` (default `neural`), `VERA_POLLY_RATE` (default `92%`),
-`AWS_REGION` (default `us-east-1`), `VERA_SES_FROM_EMAIL` (see
-Configuration). Needs AWS credentials (e.g. via `aws configure`) with
-`bedrock:InvokeModel`, `polly:SynthesizeSpeech`, and, for email nudges,
-`ses:SendEmail`.
+plus everything under [Configuration](#configuration) (`AWS_REGION`,
+`VERA_SES_FROM_EMAIL`, `VERA_S3_BUCKET`, `VERA_S3_PREFIX`). Needs AWS
+credentials (e.g. via `aws configure`) with `bedrock:InvokeModel`,
+`polly:SynthesizeSpeech`, `ses:SendEmail` for email nudges, and, if a
+bucket is configured, `s3:PutObject` on it (this is where a recorded cheer
+actually gets uploaded from).
+
+## Friction log
+
+Things that were harder than expected building this, kept here rather than
+smoothed over:
+
+- **Nova Lite sometimes talked to itself.** Its replies would occasionally arrive wrapped in `<thinking>...</thinking>` or `<response>...</response>` tags instead of plain text -- harmless in a text chat window, but Vera's replies get read aloud and shown as a caption, so leaking either tag straight to speech would have been obviously broken. `web/bedrock_chat.py`'s `_clean_reply` strips both before anything is spoken.
+- **One giant end-to-end test started silently timing out around the 300-second mark** on this Windows dev machine after the test file grew past ~60 sequential MCP tool calls in a single client session -- no error for a long time, then a `ReadTimeout` deep in `httpx`/`httpcore`. Took a repro script against a clean server to confirm the *tools* weren't the problem before suspecting the long-lived connection itself. Fixed by splitting the one test into a few focused tests, each starting its own short-lived server -- the real fix turned out to be architectural (smaller sessions), not a timeout tweak.
+- **Getting Vera to stop talking over her own audio** -- the chair-stretch and meditation screens both start playing a track right after Vera's spoken intro, and `speakText()`/`<audio>.play()` are both async; without awaiting the intro's completion callback first, the two would overlap every time. Easy to miss because it only showed up with real audio, not in a quiet unit test.
+- **Deciding what a "family member" needs to not be an account.** The brief for this project was explicit: no logins anywhere. For a dashboard (the caregiver) that's easy -- it's just another profile. For a family member who should be able to record one cheer from their phone and nothing else, the honest answer turned out to be "a single unguessable URL is the whole access model," which took longer to be comfortable with than it probably should have, because it's unfamiliar compared to reaching for an account by default.
+- **Presigned URLs plus a Python `lru_cache` don't mix cleanly.** Caching whether a file exists in S3 is the obvious way to avoid a `HEAD` request on every single `list_sessions` call, but it meant writing the tests for "falls back to local" and "prefers S3" very deliberately, each clearing the cache first -- otherwise one test's monkeypatched bucket state leaks into the next test that happens to check the same filename.
+- **A presigned-URL call with no bucket configured didn't fail the way I expected.** `boto3.generate_presigned_url(Bucket=None, ...)` doesn't raise a clean `ClientError` -- it blows up with a raw `TypeError` deep inside botocore's internal bucket-name validator, which my original `except (ClientError, BotoCoreError)` didn't catch. Found it by actually calling the function with nothing configured instead of assuming the "it's optional, so it's safe" docstring I'd just written was true.
 
 ## Roadmap
 
 - Optional check in calls
+- Move `data/vera.json` to DynamoDB so the App Runner deployment survives a redeploy and can scale past one instance
 
 ## License
 

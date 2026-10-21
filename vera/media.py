@@ -1,17 +1,21 @@
 """Loads the exercise and meditation manifests: JSON files that sit right
 alongside the real media files in web/static/media/<category>/manifest.json.
 
-Each manifest entry names the video/audio/thumbnail file it expects. This
-module checks whether that file actually exists on disk and reports
-`available` accordingly, so a routine shows a friendly "video coming soon"
-card until the real recording is dropped in with the exact filename the
-manifest expects -- no code change needed when it arrives.
+Each manifest entry names the video/audio/thumbnail file it expects. When
+Amazon S3 is configured (see vera/cloud_storage.py), that file is served
+from the bucket via a presigned URL; otherwise this module checks whether
+it exists on local disk instead, so a routine with no recording yet simply
+shows a friendly "coming soon" card -- no code change needed once the real
+file is dropped in (locally, or uploaded to the bucket) with the exact
+filename the manifest expects.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Any
+
+from . import cloud_storage
 
 MEDIA_ROOT = Path(__file__).resolve().parent.parent / "web" / "static" / "media"
 EXERCISE_DIR = MEDIA_ROOT / "exercise"
@@ -25,22 +29,34 @@ def _load_manifest(path: Path) -> list[dict[str, Any]]:
         return json.load(f)
 
 
-def _public_url(media_dir: Path, filename: str | None) -> str | None:
-    if not filename:
-        return None
+def _local_url(media_dir: Path, filename: str) -> str:
     rel = media_dir.relative_to(MEDIA_ROOT)
     return f"/media/{rel.as_posix()}/{filename}"
 
 
+def _s3_key(media_dir: Path, filename: str) -> str:
+    rel = media_dir.relative_to(MEDIA_ROOT)
+    return f"media/{rel.as_posix()}/{filename}"
+
+
+def _resolve_url(media_dir: Path, filename: str | None) -> str | None:
+    if not filename:
+        return None
+    if cloud_storage.enabled():
+        key = _s3_key(media_dir, filename)
+        if cloud_storage.object_exists(key):
+            return cloud_storage.presigned_url(key)
+    if (media_dir / filename).exists():
+        return _local_url(media_dir, filename)
+    return None
+
+
 def _enrich(entry: dict[str, Any], media_dir: Path) -> dict[str, Any]:
     out = dict(entry)
-    file_name = entry.get("file")
-    thumb_name = entry.get("thumbnail")
-    available = bool(file_name) and (media_dir / file_name).exists()
-    has_thumbnail = bool(thumb_name) and (media_dir / thumb_name).exists()
-    out["available"] = available
-    out["media_url"] = _public_url(media_dir, file_name) if available else None
-    out["thumbnail_url"] = _public_url(media_dir, thumb_name) if has_thumbnail else None
+    media_url = _resolve_url(media_dir, entry.get("file"))
+    out["available"] = bool(media_url)
+    out["media_url"] = media_url
+    out["thumbnail_url"] = _resolve_url(media_dir, entry.get("thumbnail"))
     return out
 
 

@@ -18,6 +18,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from vera import cloud_storage
+from vera.family import cheer_s3_key
+
 from . import mcp_bridge, polly_tts, ses_email
 
 try:
@@ -152,7 +155,19 @@ async def api_cheer_upload(
 
     filename = f"{uuid.uuid4().hex}.webm"
     content = await file.read()
-    (CHEER_MEDIA_DIR / filename).write_bytes(content)
+
+    storage = "local"
+    if cloud_storage.enabled():
+        try:
+            content_type = file.content_type or ("video/webm" if media_type == "video" else "audio/webm")
+            await run_in_threadpool(cloud_storage.upload_bytes, cheer_s3_key(filename), content, content_type)
+            storage = "s3"
+        except Exception:
+            # S3 unreachable or misconfigured -- fall back to local disk
+            # below rather than losing the recording.
+            storage = "local"
+    if storage == "local":
+        (CHEER_MEDIA_DIR / filename).write_bytes(content)
 
     try:
         result = await mcp_bridge.call_tool("save_cheer", {
@@ -161,6 +176,7 @@ async def api_cheer_upload(
             "file": filename,
             "user_id": user_id,
             "milestone_id": milestone_id or None,
+            "storage": storage,
         })
     except mcp_bridge.ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
