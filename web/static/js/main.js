@@ -649,7 +649,8 @@ async function startMeditation(meditationId, preloaded) {
     }
   }
   el("meditation-text").textContent = data.title;
-  say(data.say);
+  await say(data.say);
+  if (current !== "meditation") return;
 
   if (data.available && data.media_url) {
     await runRealMeditationMedia(data, meditationId);
