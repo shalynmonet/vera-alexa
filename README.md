@@ -29,6 +29,8 @@ Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the o
 | `get_streak` | Current and longest streak |
 | `check_milestones` | Awards any newly earned badges |
 | `get_daily_summary` | Caregiver friendly summary of the day, including self-reported activities |
+| `remember_fact` | Saves a meaningful personal detail (family, hobbies, upcoming events) to bring up again later; refuses health details |
+| `get_memories` | Recent personal facts, most recent first, for Nova to naturally bring one up in conversation |
 
 **Design choices for older users:** every activity counts toward the streak, one missed day is forgiven (grace day), and missed days are never framed as failures.
 
@@ -44,6 +46,24 @@ to the fitness log:
 - **Word Categories** -- name as many things as you can in a category (fruits, animals, colors, furniture, vegetables), scored forgivingly like the memory game.
 
 Playing all four at least once earns the "Tried Every Game" badge.
+
+### Memories and the proactive greeting
+
+Vera remembers meaningful personal details shared in conversation -- family, hobbies,
+upcoming events -- via `remember_fact` (`vera/memories.py`), stored per user in the
+same JSON store as everything else. A keyword backstop refuses anything
+health-related (diagnoses, medications, symptoms) even if asked to save it,
+on top of the system prompt telling Nova never to try; in testing, Nova
+never even attempted it. `get_memories` lets Nova recall one later, e.g.
+"Last time you said your granddaughter had a volleyball game -- how did it go?"
+
+When the app opens, Vera greets the person by name before being asked --
+once per session/profile, not on every visit to Home -- using the same
+Bedrock tool loop as regular chat: she calls `get_daily_summary` for streak
+and recent milestones, `get_memories` for one personal detail, mentions any
+milestone she's close to, and suggests one activity (without starting it).
+If Bedrock isn't configured, Home falls back to the simple streak-based
+greeting from Day 2.
 
 ### Exercise and meditation media
 

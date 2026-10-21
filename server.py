@@ -13,7 +13,7 @@ from datetime import date
 
 from mcp.server.fastmcp import FastMCP
 
-from vera import matching_game, media, memory_game, progress, saying_game, word_categories
+from vera import matching_game, media, memories, memory_game, progress, saying_game, word_categories
 from vera.content import GAMES
 from vera.storage import Store
 
@@ -30,7 +30,9 @@ mcp = FastMCP(
         "completed guided session, call log_completion; for anything else the "
         "person did on their own (a walk, a bike ride, gardening, dancing, "
         "swimming, or any other activity), call log_activity instead. Celebrate "
-        "any new milestones a tool call returns."
+        "any new milestones a tool call returns. Save meaningful personal "
+        "details (family, hobbies, upcoming events) with remember_fact so they "
+        "can come up again naturally -- never health details."
     ),
     host=HOST,
     port=PORT,
@@ -389,6 +391,33 @@ def check_milestones(user_id: str = "demo", on_date: str | None = None) -> dict:
     new = progress.check_milestones(u, _today(on_date))
     store.save_user(u)
     return {"new_milestones": new, "all_milestones": u["milestones"]}
+
+
+# ---------- Memories ----------
+
+@mcp.tool()
+def remember_fact(fact: str, user_id: str = "demo", category: str | None = None, on_date: str | None = None) -> dict:
+    """Save a meaningful personal detail the person shared in conversation --
+    family, hobbies, upcoming events, things they're looking forward to --
+    so Vera can naturally bring it up again later. category is optional
+    (e.g. 'family', 'hobby', 'event'). Never call this with health details
+    (diagnoses, medications, symptoms, or anything medical) -- those are
+    refused and not saved."""
+    if memories.is_health_related(fact):
+        return {"saved": False, "error": "That sounds like a health detail -- Vera doesn't store those."}
+    u = store.get_user(user_id)
+    u.setdefault("memories", [])
+    entry = memories.add(u["memories"], fact, _today(on_date).isoformat(), category)
+    store.save_user(u)
+    return {"saved": True, "memory": entry}
+
+
+@mcp.tool()
+def get_memories(user_id: str = "demo", limit: int = 10) -> dict:
+    """Recent personal facts Vera has remembered about this person, most
+    recent first, for bringing one up naturally in conversation."""
+    u = store.get_user(user_id)
+    return {"memories": memories.recent(u.get("memories", []), max(1, min(50, limit)))}
 
 
 # ---------- Caregiver ----------

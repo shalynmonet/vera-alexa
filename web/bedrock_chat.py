@@ -60,7 +60,32 @@ SYSTEM_PROMPT = (
     "minutes' or 'I did half an hour of gardening' -- call log_activity "
     "instead, with your best guess at the minutes if they didn't say a "
     "number. If a tool result includes new_milestones, warmly celebrate "
-    "each one by name."
+    "each one by name. "
+    "When the person shares a meaningful personal detail -- family, hobbies, "
+    "upcoming events, things they're looking forward to -- call remember_fact "
+    "so you can naturally bring it up again later, for example: 'Last time "
+    "you said your granddaughter had a volleyball game. How did it go?' "
+    "Never call remember_fact with health details (diagnoses, medications, "
+    "symptoms, or anything medical) -- just let those pass by without "
+    "saving them. Call get_memories when you want to recall something to "
+    "mention. Milestones include streaks of 3, 7, and 30 days, 10 stretch "
+    "sessions, 10 meditations, 60 active minutes in a week, 100 lifetime "
+    "active minutes, and trying every game -- when the person is close to "
+    "one, you can gently mention it."
+)
+
+# A synthetic "kickoff" turn used to drive a proactive greeting when the app
+# opens, instead of waiting for the person to say something first. It is
+# never shown to the person -- only the resulting reply is spoken.
+GREETING_KICKOFF = (
+    "(The app just opened for this person -- they haven't said anything "
+    "yet. Proactively greet them by name. Call get_daily_summary for their "
+    "streak and recent progress, and get_memories for one personal detail "
+    "to naturally bring up if you have one. If they're close to a "
+    "milestone, mention that too. Then suggest one specific activity for "
+    "today -- just suggest it in words, don't start it. Keep the whole "
+    "greeting to two or three short sentences, since it will be spoken "
+    "aloud.)"
 )
 
 _client = None
@@ -146,3 +171,10 @@ async def converse(message: str, history: list[dict], user_id: str = DEFAULT_USE
         "history": messages,
         "tool_calls": tool_calls,
     }
+
+
+async def greet(user_id: str = DEFAULT_USER_ID) -> dict:
+    """A proactive greeting for when the app opens, instead of waiting to be
+    asked. Reuses the normal tool loop so Nova can pull the daily summary
+    and a memory itself."""
+    return await converse(GREETING_KICKOFF, [], user_id)

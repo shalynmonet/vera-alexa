@@ -115,6 +115,17 @@ def test_full_flow(tmp_path):
                     tried_all = _data(await s.call_tool("get_fitness_log", {}))
                     assert "tried_every_game" in {m["id"] for m in tried_all["milestones"]}
 
+                    saved = _data(await s.call_tool("remember_fact", {
+                        "fact": "Her granddaughter Mia has a volleyball game Saturday",
+                        "category": "family",
+                    }))
+                    assert saved["saved"]
+                    refused = _data(await s.call_tool("remember_fact", {"fact": "Started a new blood pressure medication"}))
+                    assert not refused["saved"]
+                    mems = _data(await s.call_tool("get_memories", {}))
+                    assert len(mems["memories"]) == 1
+                    assert "Mia" in mems["memories"][0]["fact"]
+
         asyncio.run(run())
     finally:
         proc.terminate()

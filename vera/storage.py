@@ -31,6 +31,7 @@ def _empty_user(user_id: str, name: str | None = None) -> dict[str, Any]:
         "activities": [],      # {"type", "date", "minutes", "details"}
         "milestones": [],      # {"id", "title", "earned_on"}
         "game": None,          # in-progress memory game
+        "memories": [],        # {"fact", "recorded_on", "category"}
     }
 
 

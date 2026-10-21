@@ -28,6 +28,19 @@ HOST = os.environ.get("WEB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("WEB_PORT", "8080"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+class NoCacheStaticFiles(StaticFiles):
+    """Static files change constantly during development/demos; without an
+    explicit Cache-Control header, browsers apply heuristic caching off
+    Last-Modified and can keep serving a stale JS/CSS file for a long time.
+    Force revalidation on every request instead (cheap: it's a 304 if the
+    file hasn't actually changed)."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 app = FastAPI(title="Vera Web Simulator")
 
 
@@ -58,6 +71,18 @@ async def api_chat(payload: dict):
     return result
 
 
+@app.post("/api/greet")
+async def api_greet(payload: dict):
+    if bedrock_chat is None:
+        raise HTTPException(status_code=503, detail="Bedrock chat layer not configured.")
+    user_id = payload.get("user_id", "demo")
+    try:
+        result = await bedrock_chat.greet(user_id)
+    except bedrock_chat.ChatError as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
+    return result
+
+
 @app.post("/api/speak")
 async def api_speak(payload: dict):
     text = (payload.get("text") or "").strip()
@@ -74,7 +99,7 @@ async def api_speak(payload: dict):
 # reachable at /audio-cache/<hash>.mp3.
 app.mount("/audio-cache", StaticFiles(directory=str(polly_tts.CACHE_DIR)), name="audio_cache")
 
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+app.mount("/", NoCacheStaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 
 if __name__ == "__main__":

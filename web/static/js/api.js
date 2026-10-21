@@ -28,3 +28,16 @@ export async function chat(message, history, userId = "demo") {
   }
   return res.json();
 }
+
+export async function greet(userId = "demo") {
+  const res = await fetch("/api/greet", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || err.detail || "Greet request failed");
+  }
+  return res.json();
+}

@@ -1,4 +1,4 @@
-import { callTool, chat } from "./api.js";
+import { callTool, chat, greet } from "./api.js";
 import { listen, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
@@ -15,6 +15,7 @@ const ENCOURAGEMENTS = [
 const MAX_HISTORY = 20;
 const REMEMBERED_USER_KEY = "vera_user_id";
 let conversationHistory = [];
+let greetedThisSession = false; // proactive greeting fires once per app open/profile
 let currentUserId = null;
 
 const el = (id) => document.getElementById(id);
@@ -156,6 +157,7 @@ async function renderStart() {
 function selectProfile(userId) {
   currentUserId = userId;
   conversationHistory = [];
+  greetedThisSession = false;
   rememberUserId(userId);
   showScreen("home");
 }
@@ -298,20 +300,40 @@ async function captureSpeech() {
 async function renderHome() {
   el("home-greeting").textContent = `${greetingWord()}`;
   el("home-sub").textContent = "Let's see what Vera has for you today.";
+  let profile, streak;
   try {
-    const profile = await callTool("get_profile", { user_id: currentUserId });
+    profile = await callTool("get_profile", { user_id: currentUserId });
     const log = await callTool("get_fitness_log", { user_id: currentUserId, days: 7 });
+    streak = log.streak.current;
     el("home-greeting").textContent = `${greetingWord()}, ${profile.name}`;
-    const streak = log.streak.current;
     el("home-sub").textContent = streak > 0
       ? `You're on a ${streak} day streak. Keep it up!`
       : "Let's do something nice today.";
-    await say(streak > 0
-      ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
-      : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
   } catch {
     el("home-sub").textContent = "Couldn't reach Vera's server. Is it running?";
+    return;
   }
+
+  // Proactive greeting: Vera speaks up first, once per app open/profile,
+  // pulling in the daily summary, streak, an upcoming milestone, and a
+  // memory herself -- rather than a generic line repeated on every visit.
+  if (!greetedThisSession) {
+    greetedThisSession = true;
+    try {
+      const result = await greet(currentUserId);
+      conversationHistory = (result.history || []).slice(-MAX_HISTORY);
+      if (result.reply) {
+        await say(result.reply);
+        return;
+      }
+    } catch {
+      // Bedrock unavailable -- fall back to the simple greeting below.
+    }
+  }
+
+  await say(streak > 0
+    ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
+    : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
 }
 
 // ---------- games ----------
