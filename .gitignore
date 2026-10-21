@@ -4,3 +4,4 @@ __pycache__/
 data/*.json
 data/*.tmp
 web/audio_cache/
+web/cheer_media/

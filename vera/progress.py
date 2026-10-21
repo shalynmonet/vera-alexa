@@ -129,3 +129,48 @@ def check_milestones(user: dict, today: date) -> list[dict]:
             user["milestones"].append(m)
             new.append(m)
     return new
+
+
+def upcoming(user: dict, today: date) -> list[dict]:
+    """Milestones this person is one step away from -- for 'almost there'
+    family cheer nudges. Only milestones with a meaningful sense of
+    distance are considered (a perfect memory game, for instance, has none)."""
+    acts = user["activities"]
+    counts = Counter(a["type"] for a in acts)
+    streak = streaks(acts, today)
+    week = week_summary(acts, today, user.get("weekly_goal_days", 4))
+    lifetime_minutes = sum(a["minutes"] for a in acts)
+    have_ids = {m["id"] for m in user["milestones"]}
+    titles = {mid: title for mid, title, _ in MILESTONES}
+
+    out: list[dict] = []
+
+    def add(mid: str, label: str) -> None:
+        if mid not in have_ids:
+            out.append({"id": mid, "title": titles[mid], "distance_label": label})
+
+    for mid, threshold in (("streak_3", 3), ("streak_7", 7), ("streak_30", 30)):
+        if threshold - streak["current"] == 1:
+            add(mid, "1 day away")
+
+    if 10 - counts.get("stretch", 0) == 1:
+        add("stretch_10", "1 session away")
+    if 10 - counts.get("meditation", 0) == 1:
+        add("meditation_10", "1 session away")
+
+    remaining_week_minutes = 60 - week["active_minutes"]
+    if 0 < remaining_week_minutes <= 20:
+        add("active_60_week", f"about {remaining_week_minutes} minutes away")
+
+    remaining_lifetime = 100 - lifetime_minutes
+    if 0 < remaining_lifetime <= 20:
+        add("active_100_lifetime", f"about {remaining_lifetime} minutes away")
+
+    if week["goal_days"] - week["active_days"] == 1:
+        add("weekly_goal", "1 active day away")
+
+    missing_games = GAME_TYPES - set(counts)
+    if len(missing_games) == 1:
+        add("tried_every_game", f"one game away (just {next(iter(missing_games)).replace('_', ' ')} left to try)")
+
+    return out

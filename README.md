@@ -31,6 +31,10 @@ Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the o
 | `get_daily_summary` | Caregiver friendly summary of the day, including self-reported activities |
 | `remember_fact` | Saves a meaningful personal detail (family, hobbies, upcoming events) to bring up again later; refuses health details |
 | `get_memories` | Recent personal facts, most recent first, for Nova to naturally bring one up in conversation |
+| `list_family`, `add_family_member`, `remove_family_member` | Family members who can record cheers, each with a private record-link token |
+| `resolve_family_token` | Looks up who a private record-page link belongs to and who it's for |
+| `upcoming_milestones` | Milestones the person is one step away from, each with a ready-made "almost there" nudge |
+| `save_cheer`, `list_cheers`, `get_cheer`, `mark_cheer_played` | Save, browse, fetch, and mark-played the audio/video cheers family members record |
 
 **Design choices for older users:** every activity counts toward the streak, one missed day is forgiven (grace day), and missed days are never framed as failures.
 
@@ -79,6 +83,37 @@ Beyond the guided sessions, three ways to log an unguided activity (walk, bike, 
 
 Every tool accepts an optional `on_date` (YYYY-MM-DD) so demos and tests can use a fixed date.
 
+### Family Cheers
+
+Family members can record a short audio or video cheer for the person using
+Vera, with no account or login of their own. From the caregiver dashboard
+(`/caregiver/<user_id>`, linked from the Progress screen), add a family
+member's name, relationship, and optional email; each gets a unique, private
+record-page link (`/cheer/<token>`) built around `secrets.token_urlsafe`
+(`vera/family.py`) -- the token itself is the only thing that page knows
+them by.
+
+The record page (`web/static/cheer/record.html`, `web/static/js/cheer-record.js`)
+is a single large Record button (browser `MediaRecorder`, audio or video, 30
+seconds max), with preview, re-record, and Send. A cheer can be attached to
+one of the person's upcoming milestones (`upcoming_milestones` finds
+milestones they're one step away from -- "1 day away", "about 10 minutes
+away" -- and writes a ready-made nudge like "Rose is 1 day away from their 7
+Day Streak! Record a cheer and Vera will play it the moment she gets
+there"), or saved as an "anytime" cheer for a backup bank.
+
+The dashboard shows the daily summary, each upcoming milestone's nudge with
+a copyable record link per family member, and the family list. With Amazon
+SES configured (sandbox mode -- sender and every recipient must be verified
+identities), it can also email a nudge directly; copying the link always
+works regardless.
+
+When a milestone is newly earned, Vera says "Someone has a message for
+you!" and plays any matching cheer full screen. A cheer attached to a
+milestone that was already earned before it was recorded has missed that
+moment, so it's queued instead and plays at the next app open ("You have a
+message from Jake"), right after the proactive greeting.
+
 ## Run it (Windows PowerShell)
 
 ```powershell
@@ -117,6 +152,7 @@ Includes an end to end test that starts the server and calls every core tool thr
 | `VERA_PORT` | `8000` | |
 | `VERA_DATA` | `data/vera.json` | JSON store |
 | `VERA_CORS_ORIGINS` | `*` | Lock down for production |
+| `VERA_SES_FROM_EMAIL` | *(none)* | Verified sender for optional email nudges; without it, emailing a nudge fails (copying the record link still always works) |
 
 ## Web simulator
 
@@ -166,14 +202,16 @@ python -m web.app   # http://127.0.0.1:8080
 
 Configuration (env vars): `VERA_MCP_URL` (default `http://127.0.0.1:8000/mcp`),
 `WEB_HOST` / `WEB_PORT` (default `127.0.0.1:8080`), `VERA_BEDROCK_MODEL_ID`
-(default `us.amazon.nova-lite-v1:0`), `VERA_POLLY_VOICE` (default `Joanna`),
+(default `us.amazon.nova-lite-v1:0`), `VERA_POLLY_VOICE` (default `Ruth`),
 `VERA_POLLY_ENGINE` (default `neural`), `VERA_POLLY_RATE` (default `92%`),
-`AWS_REGION` (default `us-east-1`). Needs AWS credentials (e.g. via
-`aws configure`) with `bedrock:InvokeModel` and `polly:SynthesizeSpeech`.
+`AWS_REGION` (default `us-east-1`), `VERA_SES_FROM_EMAIL` (see
+Configuration). Needs AWS credentials (e.g. via `aws configure`) with
+`bedrock:InvokeModel`, `polly:SynthesizeSpeech`, and, for email nudges,
+`ses:SendEmail`.
 
 ## Roadmap
 
-- Optional check in calls and caregiver reports
+- Optional check in calls
 
 ## License
 

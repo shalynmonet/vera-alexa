@@ -10,14 +10,15 @@ Run (with the Vera MCP server already running on :8000), from the project root:
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import mcp_bridge, polly_tts
+from . import mcp_bridge, polly_tts, ses_email
 
 try:
     from . import bedrock_chat
@@ -27,6 +28,8 @@ except ImportError:
 HOST = os.environ.get("WEB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("WEB_PORT", "8080"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+CHEER_MEDIA_DIR = Path(__file__).resolve().parent / "cheer_media"
+CHEER_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 class NoCacheStaticFiles(StaticFiles):
     """Static files change constantly during development/demos; without an
@@ -95,9 +98,112 @@ async def api_speak(payload: dict):
     return {"url": f"/audio-cache/{filename}"}
 
 
-# Mounted before the catch-all "/" static mount below so cached audio is
-# reachable at /audio-cache/<hash>.mp3.
+# ---------- Family Cheers ----------
+
+@app.get("/cheer/{token}")
+async def cheer_record_page(token: str):
+    """A family member's private, no-login record page. The token itself
+    is only validated client-side via /api/cheer/context -- this route just
+    serves the page shell for any token-shaped path."""
+    return FileResponse(str(STATIC_DIR / "cheer" / "record.html"))
+
+
+@app.get("/caregiver/{user_id}")
+async def caregiver_dashboard_page(user_id: str):
+    return FileResponse(str(STATIC_DIR / "caregiver" / "dashboard.html"))
+
+
+@app.get("/api/cheer/context/{token}")
+async def api_cheer_context(token: str, milestone: str | None = None):
+    try:
+        resolved = await mcp_bridge.call_tool("resolve_family_token", {"token": token})
+        if "error" in resolved:
+            return JSONResponse(status_code=404, content={"valid": False})
+        user_id = resolved["user_id"]
+        member = resolved["member"]
+        profile = await mcp_bridge.call_tool("get_profile", {"user_id": user_id})
+        upcoming = await mcp_bridge.call_tool("upcoming_milestones", {"user_id": user_id})
+    except mcp_bridge.ToolError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "valid": True,
+        "recipient_name": profile["name"],
+        "family_name": member["name"],
+        "upcoming_milestones": upcoming["upcoming"],
+        "default_milestone_id": milestone,
+    }
+
+
+@app.post("/api/cheer/upload/{token}")
+async def api_cheer_upload(
+    token: str,
+    file: UploadFile = File(...),
+    media_type: str = Form(...),
+    milestone_id: str | None = Form(None),
+):
+    try:
+        resolved = await mcp_bridge.call_tool("resolve_family_token", {"token": token})
+    except mcp_bridge.ToolError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    if "error" in resolved:
+        raise HTTPException(status_code=404, detail=resolved["error"])
+    user_id = resolved["user_id"]
+    member = resolved["member"]
+
+    filename = f"{uuid.uuid4().hex}.webm"
+    content = await file.read()
+    (CHEER_MEDIA_DIR / filename).write_bytes(content)
+
+    try:
+        result = await mcp_bridge.call_tool("save_cheer", {
+            "family_id": member["id"],
+            "media_type": media_type,
+            "file": filename,
+            "user_id": user_id,
+            "milestone_id": milestone_id or None,
+        })
+    except mcp_bridge.ToolError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+@app.post("/api/cheer/notify")
+async def api_cheer_notify(payload: dict, request: Request):
+    """Best-effort SES email nudge; copying the record link always works
+    regardless of whether this succeeds."""
+    user_id = payload.get("user_id", "demo")
+    family_id = payload.get("family_id")
+    milestone_id = payload.get("milestone_id")
+
+    family_res = await mcp_bridge.call_tool("list_family", {"user_id": user_id})
+    member = next((m for m in family_res["family"] if m["id"] == family_id), None)
+    if not member or not member.get("email"):
+        raise HTTPException(status_code=400, detail="This family member has no email on file.")
+
+    nudge_text = f"Vera would love a cheer from you for {user_id}!"
+    if milestone_id:
+        upcoming_res = await mcp_bridge.call_tool("upcoming_milestones", {"user_id": user_id})
+        item = next((i for i in upcoming_res["upcoming"] if i["id"] == milestone_id), None)
+        if item:
+            nudge_text = item["nudge"]
+
+    link = f"{str(request.base_url).rstrip('/')}/cheer/{member['token']}"
+    if milestone_id:
+        link += f"?milestone={milestone_id}"
+    body = f"{nudge_text}\n\nRecord your cheer here: {link}"
+
+    try:
+        await run_in_threadpool(ses_email.send_nudge_email, member["email"], "A cheer for your family member", body)
+    except ses_email.EmailError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"sent": True}
+
+
+# Mounted before the catch-all "/" static mount below so cached audio and
+# cheer recordings are reachable at /audio-cache/<hash>.mp3 and
+# /cheer-media/<id>.webm.
 app.mount("/audio-cache", StaticFiles(directory=str(polly_tts.CACHE_DIR)), name="audio_cache")
+app.mount("/cheer-media", StaticFiles(directory=str(CHEER_MEDIA_DIR)), name="cheer_media")
 
 app.mount("/", NoCacheStaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

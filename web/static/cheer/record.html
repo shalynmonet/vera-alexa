@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Record a Cheer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/cheer.css" />
+</head>
+<body>
+<div class="cheer-page">
+
+  <div id="loading" class="cheer-card">
+    <p class="say-text">Loading…</p>
+  </div>
+
+  <div id="invalid" class="cheer-card hidden">
+    <h1 class="screen-title">Link not found</h1>
+    <p class="say-text">This cheer link isn't valid anymore. Ask for a new one.</p>
+  </div>
+
+  <div id="recorder" class="cheer-card hidden">
+    <h1 id="cheer-title" class="screen-title">Record a cheer</h1>
+    <p id="cheer-sub" class="say-text"></p>
+
+    <div id="mode-row" class="action-row">
+      <button id="mode-audio-btn" class="secondary-btn">🎤 Record Audio</button>
+      <button id="mode-video-btn" class="secondary-btn">🎥 Record Video</button>
+    </div>
+
+    <div id="milestone-row" class="hidden">
+      <label for="milestone-select" class="say-text">Attach to:</label>
+      <select id="milestone-select"></select>
+    </div>
+
+    <div id="record-area" class="hidden">
+      <video id="preview-video" class="hidden" playsinline muted></video>
+      <div id="timer" class="big-text">0:00 / 0:30</div>
+      <div class="action-row">
+        <button id="start-btn" class="primary-btn">⬤ Record</button>
+        <button id="stop-btn" class="secondary-btn hidden">⬛ Stop</button>
+      </div>
+    </div>
+
+    <div id="preview-area" class="hidden">
+      <p class="say-text">Here's your cheer:</p>
+      <video id="playback-video" class="hidden" controls playsinline></video>
+      <audio id="playback-audio" class="hidden" controls></audio>
+      <div class="action-row">
+        <button id="rerecord-btn" class="secondary-btn">Re-record</button>
+        <button id="send-btn" class="primary-btn">Send</button>
+      </div>
+    </div>
+
+    <div id="sent" class="hidden">
+      <h1 class="screen-title">Sent! 💛</h1>
+      <p class="say-text">Vera will share it at just the right moment.</p>
+    </div>
+  </div>
+
+</div>
+<script type="module" src="/js/cheer-record.js"></script>
+</body>
+</html>

@@ -155,6 +155,7 @@
       <div id="progress-calendar" class="calendar-grid"></div>
       <h2 class="section-sub">Badges Earned</h2>
       <div id="progress-badges" class="badge-row"></div>
+      <a id="for-family-link" href="#" target="_blank" rel="noopener">👪 For Family: Record a Cheer</a>
     </section>
 
     <section id="screen-log-activity" class="screen hidden">
@@ -234,6 +235,15 @@
   <div id="celebration" class="hidden">
     <div class="vera-slot" id="vera-slot-celebrate" data-size="celebrate"></div>
     <h2 id="celebrate-title"></h2>
+  </div>
+
+  <div id="cheer-overlay" class="hidden">
+    <div class="cheer-card-overlay">
+      <h2 id="cheer-from"></h2>
+      <video id="cheer-video" class="hidden" controls playsinline></video>
+      <audio id="cheer-audio" class="hidden" controls></audio>
+      <button id="cheer-dismiss-btn" class="primary-btn">Close</button>
+    </div>
   </div>
 
   <div id="vera-companion" class="vera-companion">

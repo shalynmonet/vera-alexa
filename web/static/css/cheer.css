@@ -1,0 +1,107 @@
+/* Shared styles for the family record page and caregiver dashboard --
+   standalone pages, not part of the main Vera app, but matching its brand. */
+
+html, body {
+  overflow: auto;
+  height: auto;
+  min-height: 100vh;
+}
+
+.cheer-page, .dashboard-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 32px 20px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.dashboard-page { max-width: 760px; align-items: stretch; }
+
+.cheer-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+
+#preview-video, #playback-video {
+  width: 100%;
+  max-width: 420px;
+  border-radius: 18px;
+  background: #000;
+}
+
+#timer {
+  font-family: var(--font-mono);
+}
+
+#playback-audio {
+  width: 100%;
+  max-width: 420px;
+}
+
+#milestone-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+#milestone-select {
+  font-size: 1.1rem;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-soft);
+  font-family: var(--font-body);
+}
+
+.dash-section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+}
+
+.nudge-card, .family-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.nudge-card p, .family-card p {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+#add-family-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+#add-family-form input {
+  flex: 1;
+  min-width: 140px;
+  font-size: 1rem;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-soft);
+}
+
+@media (max-width: 600px) {
+  .cheer-page, .dashboard-page { padding: 20px 14px 48px; }
+}

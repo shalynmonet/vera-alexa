@@ -106,6 +106,79 @@ async function celebrate(milestones) {
   }
   overlay.classList.add("hidden");
   titleEl.textContent = "";
+
+  for (const m of milestones) {
+    await playCheerForMilestone(m.id);
+  }
+}
+
+// ---------- family cheers ----------
+
+function showCheerOverlay(cheer) {
+  return new Promise((resolve) => {
+    const overlay = el("cheer-overlay");
+    const videoEl = el("cheer-video");
+    const audioEl = el("cheer-audio");
+    const isVideo = cheer.media_type === "video";
+    el("cheer-from").textContent = `A message from ${cheer.family_name}`;
+    videoEl.classList.toggle("hidden", !isVideo);
+    audioEl.classList.toggle("hidden", isVideo);
+    const mediaEl = isVideo ? videoEl : audioEl;
+    mediaEl.src = `/cheer-media/${cheer.file}`;
+    overlay.classList.remove("hidden");
+    mediaEl.play().catch(() => {});
+
+    const finish = () => {
+      videoEl.pause();
+      audioEl.pause();
+      videoEl.removeAttribute("src");
+      audioEl.removeAttribute("src");
+      overlay.classList.add("hidden");
+      el("cheer-dismiss-btn").removeEventListener("click", finish);
+      mediaEl.removeEventListener("ended", finish);
+      resolve();
+    };
+    el("cheer-dismiss-btn").addEventListener("click", finish);
+    mediaEl.addEventListener("ended", finish, { once: true });
+  });
+}
+
+async function playCheerForMilestone(milestoneId) {
+  let cheers;
+  try {
+    const res = await callTool("list_cheers", { user_id: currentUserId, milestone_id: milestoneId, unplayed_only: true });
+    cheers = res.cheers.filter((c) => !c.queued); // queued ones wait for app-open instead
+  } catch {
+    return;
+  }
+  for (const cheer of cheers) {
+    await say("Someone has a message for you!");
+    await showCheerOverlay(cheer);
+    try {
+      await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId });
+    } catch {
+      // not fatal -- worst case it's offered again next time
+    }
+  }
+}
+
+async function checkQueuedCheers() {
+  let cheers;
+  try {
+    const res = await callTool("list_cheers", { user_id: currentUserId, queued_only: true, unplayed_only: true });
+    cheers = res.cheers;
+  } catch {
+    return;
+  }
+  for (const cheer of cheers) {
+    await say(`You have a message from ${cheer.family_name}.`);
+    await showCheerOverlay(cheer);
+    try {
+      await callTool("mark_cheer_played", { cheer_id: cheer.id, user_id: currentUserId });
+    } catch {
+      // not fatal
+    }
+  }
 }
 
 function escapeHtml(s) {
@@ -319,16 +392,24 @@ async function renderHome() {
   // memory herself -- rather than a generic line repeated on every visit.
   if (!greetedThisSession) {
     greetedThisSession = true;
+    let greeted = false;
     try {
       const result = await greet(currentUserId);
       conversationHistory = (result.history || []).slice(-MAX_HISTORY);
       if (result.reply) {
         await say(result.reply);
-        return;
+        greeted = true;
       }
     } catch {
       // Bedrock unavailable -- fall back to the simple greeting below.
     }
+    if (!greeted) {
+      await say(streak > 0
+        ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
+        : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
+    }
+    await checkQueuedCheers();
+    return;
   }
 
   await say(streak > 0
@@ -1015,6 +1096,7 @@ async function renderProgress() {
   el("progress-streak").textContent = "Loading…";
   el("progress-calendar").innerHTML = "";
   el("progress-badges").innerHTML = "";
+  el("for-family-link").href = `/caregiver/${encodeURIComponent(currentUserId)}`;
   let log;
   try {
     log = await callTool("get_fitness_log", { user_id: currentUserId, days: 28 });

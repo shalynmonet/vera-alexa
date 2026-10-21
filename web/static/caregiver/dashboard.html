@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Caregiver Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="stylesheet" href="/css/cheer.css" />
+</head>
+<body>
+<div class="dashboard-page">
+  <h1 class="screen-title" id="dash-title">Caregiver Dashboard</h1>
+
+  <section class="dash-section">
+    <h2 class="section-sub">Today</h2>
+    <p id="dash-summary" class="say-text">Loading…</p>
+  </section>
+
+  <section class="dash-section">
+    <h2 class="section-sub">Almost There</h2>
+    <div id="dash-nudges"><p class="say-text">Loading…</p></div>
+  </section>
+
+  <section class="dash-section">
+    <h2 class="section-sub">Family</h2>
+    <div id="dash-family"><p class="say-text">Loading…</p></div>
+    <div id="add-family-form">
+      <input id="fam-name" type="text" placeholder="Name" autocomplete="off" />
+      <input id="fam-relationship" type="text" placeholder="Relationship (e.g. Granddaughter)" autocomplete="off" />
+      <input id="fam-email" type="email" placeholder="Email (optional)" autocomplete="off" />
+      <button id="fam-add-btn" class="primary-btn">Add Family Member</button>
+    </div>
+  </section>
+</div>
+<script type="module" src="/js/caregiver.js"></script>
+</body>
+</html>

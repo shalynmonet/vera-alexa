@@ -32,6 +32,8 @@ def _empty_user(user_id: str, name: str | None = None) -> dict[str, Any]:
         "milestones": [],      # {"id", "title", "earned_on"}
         "game": None,          # in-progress memory game
         "memories": [],        # {"fact", "recorded_on", "category"}
+        "family": [],          # {"id", "name", "relationship", "email", "token"}
+        "cheers": [],          # {"id", "family_id", "family_name", "milestone_id", "media_type", "file", "recorded_on", "queued", "played"}
     }
 
 
@@ -84,3 +86,15 @@ class Store:
                 user_id = f"{base}-{n}"
                 n += 1
             return user_id
+
+    def find_family_member(self, token: str) -> tuple[str | None, dict[str, Any] | None]:
+        """Resolve a family member's private record-page token to their
+        (user_id, member record), scanning every user -- there's no login to
+        scope the lookup by, so the token itself is the only key."""
+        with _lock:
+            data = self._load()
+            for uid, u in data["users"].items():
+                for member in u.get("family", []):
+                    if member.get("token") == token:
+                        return uid, member
+            return None, None

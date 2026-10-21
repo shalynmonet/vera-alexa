@@ -120,6 +120,44 @@ def test_tried_every_game_not_awarded_until_all_four():
     assert "tried_every_game" not in ids
 
 
+def test_upcoming_streak_one_day_away():
+    user = {"activities": acts(0, 1), "milestones": [], "weekly_goal_days": 4}
+    ids = {u["id"] for u in progress.upcoming(user, T)}
+    assert "streak_3" in ids
+
+
+def test_upcoming_excludes_already_earned():
+    user = {
+        "activities": acts(0, 1, 2),
+        "milestones": [{"id": "streak_3", "title": "3 Day Streak", "earned_on": T.isoformat()}],
+        "weekly_goal_days": 4,
+    }
+    ids = {u["id"] for u in progress.upcoming(user, T)}
+    assert "streak_3" not in ids
+
+
+def test_upcoming_stretch_sessions_one_away():
+    user = {"activities": acts(*range(9), kind="stretch"), "milestones": [], "weekly_goal_days": 4}
+    ids = {u["id"] for u in progress.upcoming(user, T)}
+    assert "stretch_10" in ids
+
+
+def test_upcoming_tried_every_game_missing_one():
+    activities = [
+        {"type": t, "date": T.isoformat(), "minutes": 2, "details": {}}
+        for t in ["memory_game", "matching_game", "saying_game"]
+    ]
+    user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}
+    items = {u["id"]: u for u in progress.upcoming(user, T)}
+    assert "tried_every_game" in items
+    assert "category" in items["tried_every_game"]["distance_label"]
+
+
+def test_upcoming_nothing_when_far_off():
+    user = {"activities": [], "milestones": [], "weekly_goal_days": 4}
+    assert progress.upcoming(user, T) == []
+
+
 def test_weekly_milestones_are_reearnable_next_week():
     activities = [{"type": "walk", "date": T.isoformat(), "minutes": 70, "details": {}}]
     user = {"activities": activities, "milestones": [], "weekly_goal_days": 4}
