@@ -125,6 +125,13 @@ def test_games_and_activities_flow(tmp_path):
 
             tried_all = _data(await s.call_tool("get_fitness_log", {}))
             assert "tried_every_game" in {m["id"] for m in tried_all["milestones"]}
+            summary = _data(await s.call_tool("get_daily_summary", {}))
+            memory_entry = next(a for a in summary["activities_today"] if a["type"] == "memory_game")
+            assert memory_entry["details"]["response_seconds"] >= 0
+
+            trends = _data(await s.call_tool("get_engagement_trends", {}))["trends"]
+            memory_trend = next(t for t in trends if t["game"] == "memory_game")
+            assert "just getting started" in memory_trend["label"]
 
     asyncio.run(run())
 

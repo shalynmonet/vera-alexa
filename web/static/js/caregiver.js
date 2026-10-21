@@ -40,6 +40,19 @@ async function loadSummary() {
   }
 }
 
+async function loadEngagement() {
+  let trends = [];
+  try {
+    trends = (await api("get_engagement_trends")).trends || [];
+  } catch {
+    el("dash-engagement").innerHTML = "";
+    return;
+  }
+  el("dash-engagement").innerHTML = trends.length
+    ? trends.map((t) => `<p class="say-text">${escapeHtml(t.label)}${t.response_note ? " " + escapeHtml(t.response_note) : ""}</p>`).join("")
+    : `<p class="say-text">No games played this month yet.</p>`;
+}
+
 async function loadNudgesAndFamily() {
   let nudges = [];
   let family = [];
@@ -117,5 +130,5 @@ el("fam-add-btn").addEventListener("click", async () => {
   } catch {
     el("dash-title").textContent = "Caregiver Dashboard";
   }
-  await Promise.all([loadSummary(), loadNudgesAndFamily()]);
+  await Promise.all([loadSummary(), loadEngagement(), loadNudgesAndFamily()]);
 })();

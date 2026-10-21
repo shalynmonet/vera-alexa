@@ -1123,6 +1123,16 @@ async function renderProgress() {
       .map((m) => `<div class="badge">🏅 ${escapeHtml(m.title)}</div>`)
       .join("");
   }
+
+  let trends = [];
+  try {
+    trends = (await callTool("get_engagement_trends", { user_id: currentUserId })).trends;
+  } catch {
+    // Engagement trends are a nice-to-have -- the rest of Progress still works.
+  }
+  el("progress-engagement").innerHTML = trends.length
+    ? trends.map((t) => `<div class="say-text">${escapeHtml(t.label)}${t.response_note ? " " + escapeHtml(t.response_note) : ""}</div>`).join("")
+    : `<div class="say-text">Play a few games this month to see how it's going.</div>`;
 }
 
 // ---------- wiring ----------

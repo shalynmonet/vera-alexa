@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 
 from mcp.server.fastmcp import FastMCP
 
-from vera import family, matching_game, media, memories, memory_game, progress, saying_game, word_categories
+from vera import engagement, family, matching_game, media, memories, memory_game, progress, saying_game, word_categories
 from vera.content import GAMES
 from vera.storage import Store
 
@@ -35,7 +35,10 @@ mcp = FastMCP(
         "can come up again naturally -- never health details. Family members "
         "can record audio/video cheers for this person via a private link from "
         "the caregiver dashboard (reachable from the Progress screen); if asked "
-        "about messages from family, check list_cheers."
+        "about messages from family, check list_cheers. If asked how they're "
+        "doing with a particular game lately, check get_engagement_trends -- "
+        "share it warmly and plainly, never as a score, a diagnosis, or a "
+        "health claim."
     ),
     host=HOST,
     port=PORT,
@@ -56,6 +59,18 @@ def _log(user: dict, activity_type: str, minutes: float, day: date, details: dic
 def _slugify_activity(name: str) -> str:
     key = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
     return key or "activity"
+
+
+def _elapsed_seconds(started_at: str | None) -> float | None:
+    """How long since a game's started_at timestamp -- for the gentle
+    per-game response-time trend (vera/engagement.py). None if missing or
+    malformed, never raises: timing is a nice-to-have, not load-bearing."""
+    if not started_at:
+        return None
+    try:
+        return max(0.0, (datetime.now() - datetime.fromisoformat(started_at)).total_seconds())
+    except ValueError:
+        return None
 
 
 # ---------- Profile ----------
@@ -108,7 +123,7 @@ def start_memory_game(user_id: str = "demo", difficulty: int | None = None) -> d
     u = store.get_user(user_id)
     level = difficulty or (u.get("game") or {}).get("next_difficulty") or 3
     words = memory_game.new_round(level)
-    u["game"] = {"words": words, "difficulty": len(words)}
+    u["game"] = {"words": words, "difficulty": len(words), "started_at": datetime.now().isoformat()}
     store.save_user(u)
     return {
         "words": words,
@@ -128,8 +143,12 @@ def submit_memory_answer(answer: str, user_id: str = "demo", on_date: str | None
         return {"error": "No game in progress. Call start_memory_game first."}
     result = memory_game.score_answer(game["words"], answer)
     nxt = memory_game.next_difficulty(game["difficulty"], result["perfect"], result["score"], result["total"])
+    response_seconds = _elapsed_seconds(game.get("started_at"))
     u["game"] = {"words": None, "next_difficulty": nxt}
-    new = _log(u, "memory_game", 2, _today(on_date), {"score": result["score"], "total": result["total"], "perfect": result["perfect"]})
+    details = {"score": result["score"], "total": result["total"], "perfect": result["perfect"]}
+    if response_seconds is not None:
+        details["response_seconds"] = response_seconds
+    new = _log(u, "memory_game", 2, _today(on_date), details)
     store.save_user(u)
     return {**result, "next_difficulty": nxt, "say": memory_game.encouragement(result), "new_milestones": new}
 
@@ -145,7 +164,7 @@ def start_matching_game(user_id: str = "demo", difficulty: int | None = None) ->
     level = difficulty or (u.get("matching") or {}).get("next_difficulty") or 3
     cards = matching_game.deal(level)
     pairs = len(cards) // 2
-    u["matching"] = {"pairs": pairs}
+    u["matching"] = {"pairs": pairs, "started_at": datetime.now().isoformat()}
     store.save_user(u)
     return {
         "pairs": pairs,
@@ -163,9 +182,13 @@ def submit_matching_result(attempts: int, user_id: str = "demo", on_date: str | 
     state = u.get("matching") or {"pairs": matching_game.MIN_PAIRS}
     pairs = state["pairs"]
     nxt = matching_game.next_difficulty(pairs, attempts, pairs)
+    response_seconds = _elapsed_seconds(state.get("started_at"))
     u["matching"] = {"pairs": pairs, "next_difficulty": nxt}
     perfect = attempts <= pairs
-    new = _log(u, "matching_game", 3, _today(on_date), {"pairs": pairs, "attempts": attempts, "perfect": perfect})
+    details = {"pairs": pairs, "attempts": attempts, "perfect": perfect}
+    if response_seconds is not None:
+        details["response_seconds"] = response_seconds
+    new = _log(u, "matching_game", 3, _today(on_date), details)
     store.save_user(u)
     say = "Every pair found with no wasted flips. Sharp eyes today!" if perfect else f"Well done, you found all {pairs} pairs!"
     return {"pairs": pairs, "attempts": attempts, "perfect": perfect, "next_difficulty": nxt, "say": say, "new_milestones": new}
@@ -181,13 +204,14 @@ def start_saying_game(user_id: str = "demo", difficulty: int | None = None) -> d
     u = store.get_user(user_id)
     level = difficulty or (u.get("saying") or {}).get("next_difficulty") or 3
     items = saying_game.new_round(level)
-    u["saying"] = {"items": items, "index": 0, "score": 0, "total": len(items)}
+    u["saying"] = {"items": items, "index": 0, "score": 0, "total": len(items), "response_seconds_total": 0.0, "response_count": 0}
     store.save_user(u)
     return _saying_question(u)
 
 
 def _saying_question(u: dict) -> dict:
     state = u["saying"]
+    state["q_started_at"] = datetime.now().isoformat()
     item = state["items"][state["index"]]
     choices = saying_game.choices_for(item)
     return {
@@ -213,6 +237,10 @@ def submit_saying_answer(choice: str, user_id: str = "demo", on_date: str | None
     correct = saying_game.is_correct(choice, item["correct"])
     if correct:
         state["score"] += 1
+    elapsed = _elapsed_seconds(state.get("q_started_at"))
+    if elapsed is not None:
+        state["response_seconds_total"] += elapsed
+        state["response_count"] += 1
     state["index"] += 1
     if state["index"] < state["total"]:
         store.save_user(u)
@@ -221,8 +249,11 @@ def submit_saying_answer(choice: str, user_id: str = "demo", on_date: str | None
     score, total = state["score"], state["total"]
     perfect = score == total
     nxt = saying_game.next_difficulty(total, score, total)
+    details = {"score": score, "total": total, "perfect": perfect}
+    if state["response_count"]:
+        details["response_seconds"] = state["response_seconds_total"] / state["response_count"]
     u["saying"] = {"next_difficulty": nxt}
-    new = _log(u, "saying_game", 2, _today(on_date), {"score": score, "total": total, "perfect": perfect})
+    new = _log(u, "saying_game", 2, _today(on_date), details)
     store.save_user(u)
     say = f"All {total} correct! Your memory for sayings is sharp." if perfect else f"You got {score} of {total}. Nice work."
     return {
@@ -244,7 +275,7 @@ def start_category_game(user_id: str = "demo", difficulty: int | None = None) ->
     level = difficulty or (u.get("category") or {}).get("next_difficulty") or 4
     level = max(word_categories.MIN_TARGET, min(word_categories.MAX_TARGET, level))
     category = word_categories.random_category()
-    u["category"] = {"name": category, "target": level}
+    u["category"] = {"name": category, "target": level, "started_at": datetime.now().isoformat()}
     store.save_user(u)
     return {
         "category": category,
@@ -267,8 +298,12 @@ def submit_category_answer(answer: str, user_id: str = "demo", on_date: str | No
     count = result["count"]
     perfect = count >= target
     nxt = word_categories.next_difficulty(target, count, target)
+    response_seconds = _elapsed_seconds(state.get("started_at"))
     u["category"] = {"next_difficulty": nxt}
-    new = _log(u, "category_game", 2, _today(on_date), {"category": category, "found": result["found"], "count": count, "target": target})
+    details = {"category": category, "found": result["found"], "count": count, "target": target}
+    if response_seconds is not None:
+        details["response_seconds"] = response_seconds
+    new = _log(u, "category_game", 2, _today(on_date), details)
     store.save_user(u)
     say = f"Wonderful! You named {count} {category}." if perfect else f"You named {count} {category}. The target was {target} -- nice try!"
     return {**result, "category": category, "target": target, "perfect": perfect, "next_difficulty": nxt, "say": say, "new_milestones": new}
@@ -449,6 +484,17 @@ def get_daily_summary(user_id: str = "demo", on_date: str | None = None) -> dict
         titles = list(dict.fromkeys(m["title"] for m in recent))
         text += " New this week: " + ", ".join(titles) + "."
     return {"date": day.isoformat(), "activities_today": todays, "streak": s, "week": w, "recent_milestones": recent, "summary": text}
+
+
+@mcp.tool()
+def get_engagement_trends(user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Gentle, descriptive engagement trends for the cognitive games this
+    person has played recently -- accuracy and pace, compared to the month
+    before. For the Progress screen and caregiver dashboard. Never a
+    diagnosis, an alert, or a health claim -- just a warm, plain-language
+    observation like 'Memory game scores steady this month.'"""
+    u = store.get_user(user_id)
+    return {"trends": engagement.game_trends(u["activities"], _today(on_date))}
 
 
 # ---------- Family Cheers ----------

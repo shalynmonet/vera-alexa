@@ -433,6 +433,16 @@ html, body {
   margin-bottom: 20px;
 }
 
+.engagement-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 760px;
+  margin-bottom: 20px;
+}
+.engagement-list .say-text { margin: 4px 0; }
+
 .badge {
   background: var(--card);
   border: 1px solid var(--border);
