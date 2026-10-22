@@ -2,7 +2,6 @@ import { callTool, chat, greet } from "./api.js";
 import { listen, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
-import { buildChatChips, nextReplacementChip } from "./chat-chips.js";
 
 const SCREENS = ["start", "home", "games", "memory", "matching", "saying", "category", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity", "cheers", "chat"];
 const PARENT_SCREEN = {
@@ -573,14 +572,18 @@ async function renderCheersScreen() {
 // A free-form conversation with Vera, reusing the same Nova chat loop and
 // transcript-building hook as routeUtterance uses for voice/typed input
 // everywhere else -- this screen just also *displays* both sides as large
-// captions and offers tappable starter chips above the mic. Two chip slots
-// personalize from get_memories when there's something to draw on; a used
-// chip is swapped for a fresh one (another memory first, a default phrase
-// once memories run out) instead of staying put and going stale.
+// captions and offers five fixed starter chips above the mic -- tapping one
+// sends it just like the person said it out loud.
+
+const CHAT_STARTER_CHIPS = [
+  "Tell me a story",
+  "Let's talk about the old days",
+  "Tell me something that will make me smile",
+  "What should we do next?",
+  "Tell me a fun fact from history",
+];
 
 let chatOpenedThisVisit = false;
-let chatChips = [];
-let chatChipState = { memoryReserve: [], defaultCursor: 0 };
 
 function appendChatMessage(role, text) {
   const transcript = el("chat-transcript");
@@ -593,35 +596,14 @@ function appendChatMessage(role, text) {
 
 function renderChatChips() {
   const row = el("chat-chips");
-  row.innerHTML = chatChips.map((text, i) => `<button class="chip-btn" data-idx="${i}">${escapeHtml(text)}</button>`).join("");
+  row.innerHTML = CHAT_STARTER_CHIPS.map((text, i) => `<button class="chip-btn" data-idx="${i}">${escapeHtml(text)}</button>`).join("");
   row.querySelectorAll(".chip-btn").forEach((btn) => {
-    btn.addEventListener("click", () => useChatChip(Number(btn.dataset.idx)));
+    btn.addEventListener("click", () => routeUtterance(CHAT_STARTER_CHIPS[Number(btn.dataset.idx)]));
   });
 }
 
-async function useChatChip(idx) {
-  const text = chatChips[idx];
-  if (!text) return;
-  chatChips[idx] = nextReplacementChip(chatChipState);
-  await routeUtterance(text);
-  renderChatChips();
-}
-
-async function initChatChips() {
-  let memories = [];
-  try {
-    memories = (await callTool("get_memories", { user_id: currentUserId, limit: 6 })).memories;
-  } catch {
-    // No personalization this time -- the default chips still work fine.
-  }
-  const built = buildChatChips(memories);
-  chatChips = built.chips;
-  chatChipState = { memoryReserve: built.memoryReserve, defaultCursor: built.defaultCursor };
-  renderChatChips();
-}
-
 async function initChatScreen() {
-  await initChatChips();
+  renderChatChips();
   if (!chatOpenedThisVisit) {
     chatOpenedThisVisit = true;
     const greeting = "What's on your mind? Tap a card below, or just talk to me.";

@@ -115,7 +115,7 @@ A dedicated Chat screen for a free-form conversation, reusing the exact same Nov
 
 > "Tell me a story" &middot; "Let's talk about the old days" &middot; "Tell me something that will make me smile" &middot; "What should we do next?" &middot; "Tell me a fun fact from history"
 
-Up to two of the five chips personalize from `get_memories` (e.g. a remembered family event or hobby); the chip-selection logic is a small, dependency-free module (`web/static/js/chat-chips.js`) so it can be unit tested directly under Node (`tests/test_chat_chips.py`) rather than only by hand in a browser. Tapping a used chip swaps it for a fresh one -- another memory first, then a default -- so the row doesn't go stale; the chips hide while Vera's reply is in flight and reappear once she's done.
+The five chips stay fixed rather than personalizing from memories -- an earlier version tried pulling a couple from `get_memories`, but a raw remembered fact (e.g. "Her granddaughter Destiny has a volleyb...") read as an awkward, truncated chip rather than a natural talking point, so this was scrapped in favor of the five reliable prompts above. The chips hide while Vera's reply is in flight and reappear once she's done.
 
 "Let's talk about the old days" leads Nova into asking one gentle reminiscence question at a time (first job, hometown, a favorite song, how she met someone), saving anything meaningful with `remember_fact`. "What should we do next?" has Nova check `get_fitness_log`, `get_streak`, and `get_planned_activities` and suggest one specific thing, falling back to friendly discovery questions (a hobby, something around the house) once everything available has already been done for the day.
 
