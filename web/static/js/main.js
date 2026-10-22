@@ -1,7 +1,7 @@
 import { callTool, chat, greet } from "./api.js";
 import { startListening, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
-import { Companion } from "./companion.js";
+import { Companion, AVATAR_IMAGES } from "./companion.js";
 
 const SCREENS = ["start", "home", "games", "memory", "matching", "saying", "category", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity", "cheers", "chat"];
 const PARENT_SCREEN = {
@@ -92,6 +92,14 @@ function showScreen(name) {
   // somewhere else.
   pendingAnswer = null;
   chatGameActive = false;
+  // Whatever pose the live chat avatar was mid-way through (talking,
+  // listening) belonged to being on this screen -- snap it to idle so it's
+  // never found stuck mid-animation on the next visit.
+  if (leaving === "chat" && chatLiveAvatarImg) {
+    chatLiveAvatarImg.classList.remove("avatar-fade-out");
+    chatLiveAvatarImg.dataset.pose = "idle";
+    chatLiveAvatarImg.src = AVATAR_IMAGES.idle;
+  }
   if (leaving === "meditation" && name !== "meditation") stopMeditationEarly();
   if (leaving === "stretch" && name !== "stretch") {
     const video = el("stretch-video").querySelector("video");
@@ -126,12 +134,27 @@ async function say(text) {
   veraSpeaking = true;
   let resolveSpeakingDone;
   veraSpeakingDone = new Promise((resolve) => { resolveSpeakingDone = resolve; });
+  const onStart = () => mic.classList.add("speaking");
+  const onEnd = () => mic.classList.remove("speaking");
   try {
-    await Companion.say(text, (callbacks) => speakText(text, {
-      ...callbacks,
-      onStart: () => mic.classList.add("speaking"),
-      onEnd: () => mic.classList.remove("speaking"),
-    }));
+    // On the Chat screen, the newest message's own avatar carries the
+    // talking/idle animation instead of the shared corner companion.
+    if (current === "chat" && chatLiveAvatarImg) {
+      const avatarImg = chatLiveAvatarImg;
+      setChatAvatarPose(avatarImg, "talking");
+      try {
+        await speakText(text, {
+          onStart,
+          onEnd,
+          onMouthOpen: () => setChatAvatarMouth(avatarImg, true),
+          onMouthClosed: () => setChatAvatarMouth(avatarImg, false),
+        });
+      } finally {
+        setChatAvatarPose(avatarImg, "idle");
+      }
+    } else {
+      await Companion.say(text, (callbacks) => speakText(text, { ...callbacks, onStart, onEnd }));
+    }
   } finally {
     veraSpeaking = false;
     resolveSpeakingDone();
@@ -317,6 +340,8 @@ function selectProfile(userId) {
   greetedThisSession = false;
   chatOpenedThisVisit = false;
   el("chat-transcript").innerHTML = "";
+  chatLiveAvatarImg = null;
+  chatTypingBubble = null;
   rememberUserId(userId);
   showScreen("home");
 }
@@ -357,7 +382,10 @@ async function routeUtterance(text) {
     if (inChat) {
       // Chat never falls back to keyword routing or the generic "I heard
       // ..." message -- a Nova failure here gets one retry, then a short
-      // apology, with the real error logged for debugging.
+      // apology, with the real error logged for debugging. The "..."
+      // placeholder (Vera's thinking pose) covers the whole round trip,
+      // including the retry.
+      showChatTypingIndicator();
       let result;
       try {
         result = await chat(text, conversationHistory, currentUserId);
@@ -368,15 +396,17 @@ async function routeUtterance(text) {
         } catch (err2) {
           console.error("Vera chat failed again after one retry:", err2);
           const apology = "Sorry, I missed that. Could you say it again?";
-          appendChatMessage("vera", apology);
+          resolveChatReply(apology);
           await say(apology);
           return;
         }
       }
       conversationHistory = (result.history || conversationHistory).slice(-MAX_HISTORY);
       if (result.reply) {
-        appendChatMessage("vera", result.reply);
+        resolveChatReply(result.reply);
         await say(result.reply);
+      } else {
+        clearChatTypingIndicator();
       }
       await handleBedrockToolCalls(result.tool_calls || []);
       return;
@@ -546,6 +576,7 @@ async function captureSpeech() {
   hint.textContent = "Tap the microphone again to cancel";
   mic.classList.add("listening");
   Companion.setListening(true);
+  if (current === "chat") setChatAvatarPose(chatLiveAvatarImg, "listening");
 
   listenController = startListening({
     onInterim: (text) => { transcriptEl.textContent = text; },
@@ -557,6 +588,7 @@ async function captureSpeech() {
   row.classList.add("hidden");
   mic.classList.remove("listening");
   Companion.setListening(false);
+  if (current === "chat") setChatAvatarPose(chatLiveAvatarImg, "idle");
   micListening = false;
   hint.textContent = DEFAULT_MIC_HINT;
 
@@ -733,7 +765,114 @@ function looksLikeGameInterruption(text) {
   return false;
 }
 
+// ----- per-message avatar state machine -----
+// Only the newest Vera turn's avatar is ever "live" -- it cycles through
+// idle/listening/thinking/talking as the conversation moves; every older
+// one is frozen on the idle frame the moment a new turn supersedes it.
+// Macro pose changes (idle <-> listening/thinking/talking) get a gentle
+// crossfade; the rapid open/closed mouth flaps during actual speech swap
+// instantly, same split as the corner Companion uses for the same reason.
+
+let chatLiveAvatarImg = null; // <img> for the current live turn, or null
+let chatTypingBubble = null; // "..." placeholder bubble awaiting a reply, or null
+
+function prefersReducedMotion() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
+function setChatAvatarPose(img, pose) {
+  if (!img || current !== "chat" || img.dataset.pose === pose) return;
+  img.dataset.pose = pose;
+  if (img._fadeTimer) clearTimeout(img._fadeTimer);
+  if (prefersReducedMotion()) {
+    img.src = AVATAR_IMAGES[pose] || AVATAR_IMAGES.idle;
+    return;
+  }
+  img.classList.add("avatar-fade-out");
+  img._fadeTimer = trackTimer(setTimeout(() => {
+    img.src = AVATAR_IMAGES[pose] || AVATAR_IMAGES.idle;
+    img.classList.remove("avatar-fade-out");
+  }, 160));
+}
+
+function setChatAvatarMouth(img, open) {
+  if (!img || current !== "chat") return;
+  img.dataset.pose = open ? "talking" : "talking-closed";
+  img.src = AVATAR_IMAGES[open ? "talking" : "talking-closed"];
+}
+
+// The previous live avatar belongs to a superseded turn -- crossfade it to
+// idle for good; it never animates again.
+function freezeChatAvatar() {
+  if (chatLiveAvatarImg) setChatAvatarPose(chatLiveAvatarImg, "idle");
+  chatLiveAvatarImg = null;
+}
+
+function appendChatVeraRow(contentEl, { wide = false } = {}) {
+  freezeChatAvatar();
+  const row = document.createElement("div");
+  row.className = `chat-row chat-row-vera${wide ? " chat-row-wide" : ""}`;
+  const avatarWrap = document.createElement("div");
+  avatarWrap.className = "chat-avatar";
+  const img = document.createElement("img");
+  img.className = "chat-avatar-img";
+  img.alt = "Vera";
+  img.dataset.pose = "idle";
+  img.src = AVATAR_IMAGES.idle;
+  avatarWrap.appendChild(img);
+  row.appendChild(avatarWrap);
+  row.appendChild(contentEl);
+  const transcript = el("chat-transcript");
+  transcript.appendChild(row);
+  transcript.scrollTop = transcript.scrollHeight;
+  chatLiveAvatarImg = img;
+  return row;
+}
+
+// Shows a "..." bubble in Vera's thinking pose while a chat() request is in
+// flight -- resolveChatReply then fills this same bubble in rather than
+// adding a second one, so her avatar carries straight on as the live one.
+function showChatTypingIndicator() {
+  const bubble = document.createElement("div");
+  bubble.className = "chat-msg chat-msg-vera chat-typing";
+  bubble.innerHTML = `<span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span>`;
+  appendChatVeraRow(bubble);
+  chatTypingBubble = bubble;
+  setChatAvatarPose(chatLiveAvatarImg, "thinking");
+}
+
+// Fills the pending typing bubble with the real reply/apology text in
+// place; if there is no pending bubble (a reply arriving outside the usual
+// chat() turn), falls back to a normal new message.
+function resolveChatReply(text) {
+  if (chatTypingBubble) {
+    chatTypingBubble.classList.remove("chat-typing");
+    chatTypingBubble.textContent = text;
+    chatTypingBubble = null;
+    return;
+  }
+  appendChatMessage("vera", text);
+}
+
+// A turn that ends in a tool call (a game starting) rather than spoken
+// text never fills the typing bubble -- drop the stray "..." instead of
+// leaving it stranded above the game card that's about to render.
+function clearChatTypingIndicator() {
+  if (chatTypingBubble) {
+    chatTypingBubble.closest(".chat-row")?.remove();
+    chatTypingBubble = null;
+    chatLiveAvatarImg = null;
+  }
+}
+
 function appendChatMessage(role, text) {
+  if (role === "vera") {
+    const bubble = document.createElement("div");
+    bubble.className = "chat-msg chat-msg-vera";
+    bubble.textContent = text;
+    appendChatVeraRow(bubble);
+    return;
+  }
   const transcript = el("chat-transcript");
   const bubble = document.createElement("div");
   bubble.className = `chat-msg chat-msg-${role}`;
@@ -771,12 +910,10 @@ async function initChatScreen() {
 // screen's own elements.
 
 function appendChatGameCard(html) {
-  const transcript = el("chat-transcript");
   const card = document.createElement("div");
   card.className = "chat-msg chat-msg-vera chat-game-card";
   card.innerHTML = html;
-  transcript.appendChild(card);
-  transcript.scrollTop = transcript.scrollHeight;
+  appendChatVeraRow(card, { wide: true });
   return card;
 }
 
@@ -1907,6 +2044,17 @@ function init() {
   el("type-send").addEventListener("click", sendTyped);
   el("type-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") sendTyped();
+  });
+  // Typing stands in for the mic's "listening" state on Chat -- same live
+  // avatar, just driven by focus/keystrokes instead of mic audio.
+  el("type-input").addEventListener("focus", () => {
+    if (current === "chat") setChatAvatarPose(chatLiveAvatarImg, "listening");
+  });
+  el("type-input").addEventListener("input", () => {
+    if (current === "chat") setChatAvatarPose(chatLiveAvatarImg, "listening");
+  });
+  el("type-input").addEventListener("blur", () => {
+    if (current === "chat" && !chatTypingBubble) setChatAvatarPose(chatLiveAvatarImg, "idle");
   });
 
   if (!speechRecognitionSupported()) {

@@ -37,6 +37,11 @@ const SECTION_POSE = {
   chat: "idle",
 };
 
+// Plain pose-name -> image-path lookup, reused by the Chat screen's own
+// per-message avatars (see main.js) so both places draw from one source of
+// truth for what each pose looks like.
+export const AVATAR_IMAGES = Object.fromEntries(Object.entries(POSES).map(([name, pose]) => [name, pose.img]));
+
 let root, img, bubble;
 let baseScreen = "home";
 
