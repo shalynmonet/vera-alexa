@@ -31,14 +31,14 @@ Vera is named after my late great-grandmother and inspired by caring for my gran
   The web simulator also calls these directly, standing in for what
   Alexa+ provides natively on-device:
 
-    Amazon Bedrock (Nova Lite) -- conversational tool-use loop, greeting
+    Amazon Bedrock (Nova Pro)  -- conversational tool-use loop, greeting
     Amazon Polly               -- text to speech
     Amazon SES                 -- optional caregiver nudge emails
 ```
 
 Vera is a **self-hosted MCP server** (spec `2025-11-25`, Streamable HTTP), the open standard behind Alexa+ integrations. In production, Alexa+ calls the MCP server's tools directly, using its own voice recognition, text to speech, and language model -- Vera never has to know any of that is happening.
 
-The included **web simulator** (`web/app.py`) exists so this could be built and demoed before any real Alexa+ integration: it plays the part of Alexa+ in the browser, recreating that pipeline locally with Amazon Bedrock (Nova Lite, for the conversational tool-use loop and the proactive greeting) and Amazon Polly (for speech). It's a development and demo harness, not a second product -- every feature it shows off is really just calling the same MCP tools Alexa+ would call.
+The included **web simulator** (`web/app.py`) exists so this could be built and demoed before any real Alexa+ integration: it plays the part of Alexa+ in the browser, recreating that pipeline locally with Amazon Bedrock (Nova Pro, for the conversational tool-use loop and the proactive greeting) and Amazon Polly (for speech). It's a development and demo harness, not a second product -- every feature it shows off is really just calling the same MCP tools Alexa+ would call.
 
 ## MCP Tools
 
@@ -119,7 +119,7 @@ The five chips stay fixed rather than personalizing from memories -- an earlier 
 
 "Let's talk about the old days" leads Nova into asking one gentle reminiscence question at a time (first job, hometown, a favorite song, how she met someone), saving anything meaningful with `remember_fact`. "What should we do next?" has Nova check `get_fitness_log`, `get_streak`, and `get_planned_activities` and suggest one specific thing, falling back to friendly discovery questions (a hobby, something around the house) once everything available has already been done for the day.
 
-Because this screen invites open-ended conversation rather than a fixed set of commands, the system prompt carries a few firm boundaries that override everything else, including the usual short-reply style: never medical advice, a diagnosis, or medication guidance (suggest her doctor or family instead); a mentioned fall, chest pain, trouble breathing, or urgent need for help gets an immediate, verbatim "Please call 911 or use your emergency button right now" *before* any sympathy -- Nova Lite needed that exact required sentence, not just a general instruction to take it seriously, to say it reliably; sadness or loneliness gets real warmth and an offer to help her feel connected to family (replaying a cheer, calling someone); and Vera never asks for money, bank/card details, a password, or a Social Security number, and warns that a caller or message asking for them may be a scam. See `tests/test_bedrock_chat.py` for the guardrail prompt tests.
+Because this screen invites open-ended conversation rather than a fixed set of commands, the system prompt carries a few firm boundaries that override everything else, including the usual short-reply style: never medical advice, a diagnosis, or medication guidance (suggest her doctor or family instead); a mentioned fall, chest pain, trouble breathing, or urgent need for help gets an immediate, verbatim "Please call 911 or use your emergency button right now" *before* any sympathy -- testing found the model needed that exact required sentence, not just a general instruction to take it seriously, to say it reliably (see FRICTION_LOG.md); sadness or loneliness gets real warmth and an offer to help her feel connected to family (replaying a cheer, calling someone); and Vera never asks for money, bank/card details, a password, or a Social Security number, and warns that a caller or message asking for them may be a scam. See `tests/test_bedrock_chat.py` for the guardrail prompt tests.
 
 ### Exercise and meditation media
 
@@ -284,7 +284,7 @@ aws s3 sync web/static/media s3://your-bucket-name/media
 
 | Service | Role in Vera |
 |---|---|
-| **Bedrock** (Amazon Nova Lite) | Powers the web simulator's conversational tool-use loop -- free-form chat, the proactive greeting, and deciding which MCP tool to call. On real Alexa+, this role is played by Alexa+'s own model; Vera's MCP tools don't change. |
+| **Bedrock** (Amazon Nova Pro) | Powers the web simulator's conversational tool-use loop -- free-form chat, the proactive greeting, and deciding which MCP tool to call. On real Alexa+, this role is played by Alexa+'s own model; Vera's MCP tools don't change. |
 | **Polly** | Text to speech for the web simulator's voice (neural engine, a slightly slower SSML rate for older ears), with disk caching. Alexa+ handles this natively in production. |
 | **S3** | Optional storage for exercise/meditation videos and Family Cheers recordings, served back out via presigned URLs so the bucket can stay private. Required (not just nice to have) once the MCP server runs somewhere its local disk doesn't persist -- see Deployment below. |
 | **SES** | Optional: lets the caregiver dashboard email a family member their cheer-recording nudge directly, instead of only copying the link. Sandbox mode by default (sender and every recipient must be verified). |
@@ -347,7 +347,7 @@ For this submission, the MCP server (`server.py`) runs locally, the same `python
 ## Web simulator
 
 An Echo Show style Alexa+ simulator in the browser: big text, high contrast,
-large buttons, and a natural chat layer (AWS Bedrock, Amazon Nova Lite via
+large buttons, and a natural chat layer (AWS Bedrock, Amazon Nova Pro via
 the Converse API) that calls Vera's MCP tools through tool use. If Bedrock
 isn't reachable or configured, the simulator falls back to simple keyword
 routing so it keeps working.
@@ -362,6 +362,20 @@ SpeechSynthesis takes over automatically, with a timed mouth-flap
 approximation (that API exposes no audio to analyse). Voice *input* stays
 the browser's SpeechRecognition either way, with the type-to-talk fallback
 for when that isn't available.
+
+Listening is continuous, not a single shot: `web/static/js/speech.js`'s
+`startListening()` runs with `continuous`/`interimResults` on, shows the
+live transcript in large text as she talks, and decides for itself when
+she's finished -- 3 seconds with no new speech, or tapping the large "I'm
+done talking" button -- rather than handing back whatever the browser's own
+recognizer caught before its first pause-triggered stop. Chrome still ends
+a recognition session on its own after a pause or about a minute even with
+`continuous: true`; when that happens mid-sentence, the same recognizer is
+restarted automatically and keeps appending to the running transcript, so
+from her side it never seems to stop listening. Tapping the mic again
+cancels without sending anything, and the mic only opens once Vera's own
+speech has finished (never while she's still talking, so she can't hear
+herself). See `tests/test_speech_listening.py` for the logic tests.
 
 A start screen lets each person in the household pick their own profile
 ("Continue as Rose" / "Add a person") -- like Alexa's voice profiles on a
@@ -398,7 +412,7 @@ python -m web.app   # http://127.0.0.1:8080
 Configuration (env vars): `VERA_MCP_URL` (default `http://127.0.0.1:8000/mcp`;
 point this at wherever the MCP server ends up deployed, once it is),
 `WEB_HOST` / `WEB_PORT` (default `127.0.0.1:8080`), `VERA_BEDROCK_MODEL_ID`
-(default `us.amazon.nova-lite-v1:0`), `VERA_POLLY_VOICE` (default `Ruth`),
+(default `us.amazon.nova-pro-v1:0`), `VERA_POLLY_VOICE` (default `Ruth`),
 `VERA_POLLY_ENGINE` (default `neural`), `VERA_POLLY_RATE` (default `92%`),
 plus everything under [Configuration](#configuration) (`AWS_REGION`,
 `VERA_SES_FROM_EMAIL`, `VERA_S3_BUCKET`, `VERA_S3_PREFIX`,

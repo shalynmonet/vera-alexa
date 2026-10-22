@@ -1,5 +1,5 @@
 import { callTool, chat, greet } from "./api.js";
-import { listen, speechRecognitionSupported } from "./speech.js";
+import { startListening, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
 
@@ -51,6 +51,9 @@ function rememberUserId(userId) {
 let current = "start";
 let activeTimers = [];     // interval/timeout ids to clear on screen change
 let micListening = false;
+let listenController = null; // active startListening() controller, or null when not listening
+let veraSpeaking = false;
+let veraSpeakingDone = Promise.resolve(); // resolves once the in-flight say() finishes
 
 function trackTimer(id) {
   activeTimers.push(id);
@@ -100,11 +103,19 @@ function goBack() {
 async function say(text) {
   if (!text) return;
   const mic = el("mic-btn");
-  await Companion.say(text, (callbacks) => speakText(text, {
-    ...callbacks,
-    onStart: () => mic.classList.add("speaking"),
-    onEnd: () => mic.classList.remove("speaking"),
-  }));
+  veraSpeaking = true;
+  let resolveSpeakingDone;
+  veraSpeakingDone = new Promise((resolve) => { resolveSpeakingDone = resolve; });
+  try {
+    await Companion.say(text, (callbacks) => speakText(text, {
+      ...callbacks,
+      onStart: () => mic.classList.add("speaking"),
+      onEnd: () => mic.classList.remove("speaking"),
+    }));
+  } finally {
+    veraSpeaking = false;
+    resolveSpeakingDone();
+  }
 }
 
 async function celebrate(milestones) {
@@ -428,19 +439,60 @@ function parseIntent(text) {
   return null;
 }
 
+const DEFAULT_MIC_HINT = "Tap the microphone and talk to Vera";
+
 async function captureSpeech() {
+  // Tap the mic again while already listening -- or tap "Tell Vera" again
+  // on a game screen -- cancels without sending, per the mic's own
+  // "listening" state rather than which button triggered it.
+  if (listenController) {
+    listenController.cancel();
+    return;
+  }
   if (micListening) return;
   micListening = true;
+
+  if (!speechRecognitionSupported()) {
+    micListening = false;
+    await say("Voice input isn't supported in this browser. Please type instead.");
+    return;
+  }
+
   const mic = el("mic-btn");
+  const hint = el("mic-hint");
+  const row = el("listening-row");
+  const transcriptEl = el("listening-transcript");
+
+  // Never listen while Vera is still talking -- wait for her to finish so
+  // the mic never picks up her own voice.
+  if (veraSpeaking) {
+    hint.textContent = "Waiting for Vera to finish…";
+    await veraSpeakingDone;
+  }
+
+  el("type-row").classList.add("hidden");
+  transcriptEl.textContent = "";
+  row.classList.remove("hidden");
+  hint.textContent = "Tap the microphone again to cancel";
   mic.classList.add("listening");
   Companion.setListening(true);
-  const text = await listen();
+
+  listenController = startListening({
+    onInterim: (text) => { transcriptEl.textContent = text; },
+  });
+  const text = await listenController.promise;
+  const wasCancelled = listenController.cancelled;
+  listenController = null;
+
+  row.classList.add("hidden");
   mic.classList.remove("listening");
   Companion.setListening(false);
   micListening = false;
+  hint.textContent = DEFAULT_MIC_HINT;
+
   if (text) {
     routeUtterance(text);
-  } else {
+  } else if (!wasCancelled) {
     await say("I didn't quite catch that. Try again, or type instead.");
   }
 }
@@ -1539,6 +1591,9 @@ function init() {
   el("meditation-bring-back-btn").addEventListener("click", () => bringBackFromDisplay("meditation-display-banner", "meditation-detail"));
 
   el("mic-btn").addEventListener("click", captureSpeech);
+  el("listening-done-btn").addEventListener("click", () => {
+    if (listenController) listenController.stop();
+  });
 
   el("type-toggle").addEventListener("click", () => {
     el("type-row").classList.toggle("hidden");

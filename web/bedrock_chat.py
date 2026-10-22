@@ -1,9 +1,9 @@
 """AWS Bedrock conversation layer for Vera.
 
 Lets the person talk to Vera naturally instead of only tapping tiles or
-saying exact keywords. Amazon Nova Lite, through the Bedrock Converse API,
+saying exact keywords. Amazon Nova Pro, through the Bedrock Converse API,
 decides which Vera MCP tool (if any) to call; we execute it for real against
-the running MCP server and feed the result back until Nova Lite has a short,
+the running MCP server and feed the result back until Nova Pro has a short,
 spoken-style reply.
 """
 from __future__ import annotations
@@ -16,11 +16,10 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from . import mcp_bridge
 
-# Nova Lite doesn't always keep its reasoning in a separate channel -- it
-# sometimes leaves a literal <thinking>...</thinking> preamble inside the
-# final reply text, and sometimes wraps the actual reply in <response>
-# tags. Strip/unwrap both so Vera never speaks her own reasoning or stray
-# markup aloud.
+# Nova doesn't always keep its reasoning in a separate channel -- it can
+# leave a literal <thinking>...</thinking> preamble inside the final reply
+# text, and sometimes wraps the actual reply in <response> tags. Strip/
+# unwrap both so Vera never speaks her own reasoning or stray markup aloud.
 _THINKING_RE = re.compile(r"<thinking>.*?</thinking>\s*", re.IGNORECASE | re.DOTALL)
 _RESPONSE_WRAP_RE = re.compile(r"^\s*<response>(.*?)</response>\s*$", re.IGNORECASE | re.DOTALL)
 
@@ -33,7 +32,7 @@ def _clean_reply(text: str) -> str:
     return text
 
 REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
-MODEL_ID = os.environ.get("VERA_BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
+MODEL_ID = os.environ.get("VERA_BEDROCK_MODEL_ID", "us.amazon.nova-pro-v1:0")
 DEFAULT_USER_ID = "demo"
 MAX_TOOL_ROUNDS = 6
 

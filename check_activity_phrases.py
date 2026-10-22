@@ -5,7 +5,7 @@ replies aren't deterministic enough for that), but a human-readable report
 for confirming the fix live, the same way the bug was first noticed.
 
 Needs the Vera MCP server already running (python server.py) and AWS
-credentials with bedrock:InvokeModel, since this calls Nova Lite for real.
+credentials with bedrock:InvokeModel, since this calls Nova Pro for real.
 
 Run:  python check_activity_phrases.py
 """
