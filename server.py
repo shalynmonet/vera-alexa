@@ -507,6 +507,28 @@ def log_activity(activity: str, minutes: float, completed: bool, user_statement:
 
 
 @mcp.tool()
+def log_chat_game(game_name: str, minutes: float, user_id: str = "demo", on_date: str | None = None) -> dict:
+    """Record a free-form talking game actually played with Vera in
+    conversation -- 20 Questions, a riddle, trivia, word association,
+    would you rather, the alphabet game, or similar -- once it's actually
+    finished or after a few real rounds. Never call this for a game that
+    was only discussed, explained, or asked about, not played. game_name
+    is a short label like '20 Questions' or 'Animal riddles'; minutes is
+    your honest estimate of how long it ran. Counts toward the streak,
+    weekly goal, and milestones the same as any other activity."""
+    name = game_name.strip() or "a talking game"
+    u = store.get_user(user_id)
+    day = _today(on_date)
+    new = _log(u, "chat_game", max(minutes, 0.5), day, {"game_name": name})
+    store.save_user(u)
+    s = progress.streaks(u["activities"], day)
+    say = f"That was fun, {u['name']}! I've logged {name}."
+    if new:
+        say += " " + " ".join(m["celebration"] for m in new)
+    return {"logged": True, "game_name": name, "streak": s, "new_milestones": new, "say": say}
+
+
+@mcp.tool()
 def plan_activity(activity: str, user_id: str = "demo", when: str | None = None, on_date: str | None = None) -> dict:
     """Save that the person said they intend to do an activity -- not yet
     completed, like 'I'm going to walk later' or 'maybe I'll meditate

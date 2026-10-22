@@ -86,6 +86,12 @@ function showScreen(name) {
   // than being cut off by this.
   stopSpeaking();
   Companion.showBubble(null);
+  // A pending game answer (or an inline chat game awaiting one) belonged
+  // to the screen we're leaving too -- an utterance on whatever screen
+  // comes next should never be misread as an answer to a question asked
+  // somewhere else.
+  pendingAnswer = null;
+  chatGameActive = false;
   if (leaving === "meditation" && name !== "meditation") stopMeditationEarly();
   if (leaving === "stretch" && name !== "stretch") {
     const video = el("stretch-video").querySelector("video");
@@ -322,29 +328,64 @@ let skipStretchStep = null; // function() | null — resolves the current stretc
 
 async function routeUtterance(text) {
   if (!text) return;
+  const inChat = current === "chat";
+
   if (pendingAnswer) {
     const handler = pendingAnswer;
     pendingAnswer = null;
-    handler(text);
-    return;
+    if (inChat) appendChatMessage("user", text);
+    if (inChat && chatGameActive && looksLikeGameInterruption(text)) {
+      // Reads as wanting out, or an unrelated question, rather than an
+      // answer -- end the game without scoring/logging it, and let the
+      // normal Nova turn below address what was actually said. Her system
+      // prompt covers asking "Want to get back to our game?"
+      setChatGameActive(false);
+    } else {
+      handler(text);
+      return;
+    }
+  } else if (inChat) {
+    appendChatMessage("user", text);
   }
 
   // On the Chat screen, both sides of the conversation show as large
   // captions, and the starter chips hide while Vera's turn is in flight
-  // (speech request + spoken reply) so they're never tapped mid-reply.
-  const inChat = current === "chat";
-  if (inChat) {
-    appendChatMessage("user", text);
-    el("chat-chips").classList.add("hidden");
-  }
+  // (speech request + spoken reply, or an inline game awaiting an answer)
+  // so they're never tapped mid-reply.
+  if (inChat) el("chat-chips").classList.add("hidden");
   try {
+    if (inChat) {
+      // Chat never falls back to keyword routing or the generic "I heard
+      // ..." message -- a Nova failure here gets one retry, then a short
+      // apology, with the real error logged for debugging.
+      let result;
+      try {
+        result = await chat(text, conversationHistory, currentUserId);
+      } catch (err) {
+        console.error("Vera chat failed, retrying once:", err);
+        try {
+          result = await chat(text, conversationHistory, currentUserId);
+        } catch (err2) {
+          console.error("Vera chat failed again after one retry:", err2);
+          const apology = "Sorry, I missed that. Could you say it again?";
+          appendChatMessage("vera", apology);
+          await say(apology);
+          return;
+        }
+      }
+      conversationHistory = (result.history || conversationHistory).slice(-MAX_HISTORY);
+      if (result.reply) {
+        appendChatMessage("vera", result.reply);
+        await say(result.reply);
+      }
+      await handleBedrockToolCalls(result.tool_calls || []);
+      return;
+    }
+
     try {
       const result = await chat(text, conversationHistory, currentUserId);
       conversationHistory = (result.history || conversationHistory).slice(-MAX_HISTORY);
-      if (result.reply) {
-        if (inChat) appendChatMessage("vera", result.reply);
-        await say(result.reply);
-      }
+      if (result.reply) await say(result.reply);
       await handleBedrockToolCalls(result.tool_calls || []);
       return;
     } catch {
@@ -362,45 +403,54 @@ async function routeUtterance(text) {
     if (intent === "stretch") { showScreen("stretch"); startStretch(); return; }
     if (intent === "meditation") { showScreen("meditation"); return; }
     if (intent === "progress") { showScreen("progress"); return; }
-    const fallback = `I heard "${text}". Try saying memory game, matching pairs, finish the saying, word categories, chair stretch, meditation, or my progress.`;
-    if (inChat) appendChatMessage("vera", fallback);
-    await say(fallback);
+    await say(`I heard "${text}". Try saying memory game, matching pairs, finish the saying, word categories, chair stretch, meditation, or my progress.`);
   } finally {
-    if (inChat) el("chat-chips").classList.remove("hidden");
+    if (inChat && !chatGameActive) el("chat-chips").classList.remove("hidden");
   }
 }
 
 // Dispatch tool calls Bedrock made during a chat turn to the matching
 // on-screen flow, reusing the already-fetched result instead of calling the
-// MCP tool again.
+// MCP tool again. When the turn happened on the Chat screen, the four
+// Games-screen games play inline in the transcript instead of navigating
+// away -- everything else (stretch, meditation, progress) still navigates,
+// since only "games" were asked to stay put.
 async function handleBedrockToolCalls(toolCalls) {
   for (const call of toolCalls) {
+    const inChat = current === "chat";
     switch (call.name) {
       case "start_memory_game":
+        if (inChat) { await renderChatMemoryGame(call.result); break; }
         showScreen("memory");
         await startMemoryGame(call.result);
         break;
       case "submit_memory_answer":
+        if (inChat) { await renderChatMemoryResult(call.result); break; }
         if (current !== "memory") showScreen("memory");
         await renderMemoryResult(call.result);
         break;
       case "start_matching_game":
+        if (inChat) { await renderChatMatchingGame(call.result); break; }
         showScreen("matching");
         await startMatchingGame(call.result);
         break;
       case "start_saying_game":
+        if (inChat) { await renderChatSayingQuestion(call.result); break; }
         showScreen("saying");
         await renderSayingQuestion(call.result);
         break;
       case "submit_saying_answer":
+        if (inChat) { await renderChatSayingResult(call.result); break; }
         if (current !== "saying") showScreen("saying");
         await renderSayingResult(call.result);
         break;
       case "start_category_game":
+        if (inChat) { await renderChatCategoryRound(call.result); break; }
         showScreen("category");
         startCategoryRound(call.result);
         break;
       case "submit_category_answer":
+        if (inChat) { await renderChatCategoryResult(call.result); break; }
         if (current !== "category") showScreen("category");
         await renderCategoryResult(call.result);
         break;
@@ -425,14 +475,20 @@ async function handleBedrockToolCalls(toolCalls) {
         break;
       case "log_activity":
         if (call.result.error) break;
-        showScreen("progress");
+        if (!inChat) showScreen("progress");
+        await celebrate(call.result.new_milestones);
+        break;
+      case "log_chat_game":
+        // Nova's own spoken reply already says what was logged -- this
+        // just handles any milestone the game earned.
+        if (call.result.error) break;
         await celebrate(call.result.new_milestones);
         break;
       case "get_fitness_log":
       case "get_streak":
       case "check_milestones":
       case "get_daily_summary":
-        showScreen("progress");
+        if (!inChat) showScreen("progress");
         break;
       default:
         break;
@@ -658,6 +714,24 @@ const CHAT_STARTER_CHIPS = [
 ];
 
 let chatOpenedThisVisit = false;
+let chatGameActive = false; // an inline game card is live and absorbing the next answer/tap
+
+function setChatGameActive(active) {
+  chatGameActive = active;
+  el("chat-chips").classList.toggle("hidden", active);
+}
+
+// A question, "stop", or similar while a game is waiting on an answer
+// reads as wanting out or saying something unrelated, not as an answer --
+// so it isn't silently scored as a wrong guess.
+function looksLikeGameInterruption(text) {
+  const t = text.trim();
+  if (!t) return false;
+  if (/\b(stop|cancel|quit|never ?mind|forget (it|the game))\b/i.test(t)) return true;
+  if (/\?\s*$/.test(t)) return true;
+  if (/^(what|why|who|when|where|how|can you|could you|do you|did you|is there|are there|tell me about)\b/i.test(t)) return true;
+  return false;
+}
 
 function appendChatMessage(role, text) {
   const transcript = el("chat-transcript");
@@ -677,6 +751,8 @@ function renderChatChips() {
 }
 
 async function initChatScreen() {
+  chatGameActive = false;
+  el("chat-chips").classList.remove("hidden"); // in case a prior visit left it hidden mid-game
   renderChatChips();
   if (!chatOpenedThisVisit) {
     chatOpenedThisVisit = true;
@@ -684,6 +760,203 @@ async function initChatScreen() {
     appendChatMessage("vera", greeting);
     await say(greeting);
   }
+}
+
+// ---------- inline games in chat ----------
+// Nova can start any of the four Games-screen games from inside a Chat
+// conversation -- when she does, it plays right there in the transcript
+// (words, board, or choices shown inline) instead of navigating away.
+// Logging/scoring goes through the exact same MCP tools as the dedicated
+// screens, just rendered into a chat-msg-vera "game card" instead of the
+// screen's own elements.
+
+function appendChatGameCard(html) {
+  const transcript = el("chat-transcript");
+  const card = document.createElement("div");
+  card.className = "chat-msg chat-msg-vera chat-game-card";
+  card.innerHTML = html;
+  transcript.appendChild(card);
+  transcript.scrollTop = transcript.scrollHeight;
+  return card;
+}
+
+// ----- memory game -----
+
+async function renderChatMemoryGame(data) {
+  const card = appendChatGameCard(`
+    <div class="chat-game-title">Word Recall</div>
+    <div class="chat-game-words">${data.words.map((w) => `<span class="word-chip">${escapeHtml(w)}</span>`).join("")}</div>
+  `);
+  await say(data.say);
+  if (current !== "chat") return;
+  card.querySelector(".chat-game-words").classList.add("hidden");
+  const note = document.createElement("div");
+  note.className = "say-text";
+  note.textContent = "Tell Vera the words you remember.";
+  card.appendChild(note);
+  setChatGameActive(true);
+  pendingAnswer = submitChatMemoryAnswer;
+}
+
+async function renderChatMemoryResult(result) {
+  appendChatMessage("vera", `You remembered ${result.score} of ${result.total} words.`);
+  await say(result.say);
+  await celebrate(result.new_milestones);
+  setChatGameActive(false);
+}
+
+async function submitChatMemoryAnswer(answer) {
+  pendingAnswer = null;
+  let result;
+  try {
+    result = await callTool("submit_memory_answer", { answer, user_id: currentUserId });
+  } catch {
+    setChatGameActive(false);
+    await say("Something went wrong scoring that. Let's try again sometime.");
+    return;
+  }
+  await renderChatMemoryResult(result);
+}
+
+// ----- matching pairs -----
+
+let chatMatchingState = { cards: [], flipped: [], matched: [], attempts: 0, busy: false, card: null };
+
+async function renderChatMatchingGame(data) {
+  const card = appendChatGameCard(`
+    <div class="chat-game-title">Matching Pairs</div>
+    <div class="chat-game-board"></div>
+  `);
+  chatMatchingState = { cards: data.cards, flipped: [], matched: [], attempts: 0, busy: false, card };
+  renderChatMatchingBoard();
+  setChatGameActive(true);
+  await say(data.say);
+}
+
+function renderChatMatchingBoard() {
+  const s = chatMatchingState;
+  const board = s.card.querySelector(".chat-game-board");
+  board.innerHTML = s.cards.map((symbol, i) => {
+    const isMatched = s.matched.includes(i);
+    const isFlipped = s.flipped.includes(i) || isMatched;
+    return `<button class="match-card${isFlipped ? " flipped" : ""}${isMatched ? " matched" : ""}" data-index="${i}" ${isMatched ? "disabled" : ""}>
+      ${isFlipped ? escapeHtml(symbol) : "❓"}
+    </button>`;
+  }).join("");
+  board.querySelectorAll(".match-card:not(.matched)").forEach((btn) => {
+    btn.addEventListener("click", () => flipChatMatchingCard(Number(btn.dataset.index)));
+  });
+}
+
+async function flipChatMatchingCard(index) {
+  const s = chatMatchingState;
+  if (current !== "chat" || s.busy) return;
+  if (s.flipped.includes(index) || s.matched.includes(index)) return;
+  s.flipped.push(index);
+  renderChatMatchingBoard();
+  if (s.flipped.length < 2) return;
+
+  s.busy = true;
+  s.attempts += 1;
+  const [a, b] = s.flipped;
+  await sleep(700);
+  if (s.cards[a] === s.cards[b]) s.matched.push(a, b);
+  s.flipped = [];
+  s.busy = false;
+  renderChatMatchingBoard();
+
+  if (s.matched.length === s.cards.length) await finishChatMatchingGame();
+}
+
+async function finishChatMatchingGame() {
+  const s = chatMatchingState;
+  let result;
+  try {
+    result = await callTool("submit_matching_result", { attempts: s.attempts, user_id: currentUserId });
+  } catch {
+    setChatGameActive(false);
+    return;
+  }
+  appendChatMessage("vera", `Found all ${result.pairs} pairs in ${s.attempts} tries!`);
+  await say(result.say);
+  await celebrate(result.new_milestones);
+  setChatGameActive(false);
+}
+
+// ----- finish the saying -----
+
+async function renderChatSayingQuestion(data) {
+  const card = appendChatGameCard(`
+    <div class="chat-game-title">Question ${data.question_number} of ${data.total}</div>
+    <div class="chat-game-prompt">"${escapeHtml(data.beginning)} ___"</div>
+    <div class="chat-game-choices">${data.choices.map((c) => `<button class="chip-btn" data-choice="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join("")}</div>
+  `);
+  card.querySelectorAll("[data-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => routeUtterance(btn.dataset.choice));
+  });
+  setChatGameActive(true);
+  pendingAnswer = submitChatSayingAnswer;
+  await say(data.say);
+}
+
+async function renderChatSayingResult(result) {
+  if (!result.done) {
+    const feedback = result.correct ? "That's right!" : `Not quite — it's "${result.answer}."`;
+    appendChatMessage("vera", feedback);
+    await say(feedback);
+    if (current !== "chat") return;
+    await renderChatSayingQuestion(result);
+    return;
+  }
+  appendChatMessage("vera", `You got ${result.score} of ${result.total} right!`);
+  await say(result.say);
+  await celebrate(result.new_milestones);
+  setChatGameActive(false);
+}
+
+async function submitChatSayingAnswer(choice) {
+  pendingAnswer = null;
+  let result;
+  try {
+    result = await callTool("submit_saying_answer", { choice, user_id: currentUserId });
+  } catch {
+    setChatGameActive(false);
+    await say("Something went wrong. Let's try again sometime.");
+    return;
+  }
+  await renderChatSayingResult(result);
+}
+
+// ----- word categories -----
+
+async function renderChatCategoryRound(data) {
+  appendChatGameCard(`
+    <div class="chat-game-title">Word Categories</div>
+    <div class="chat-game-prompt">Name as many ${escapeHtml(data.category)} as you can.</div>
+  `);
+  setChatGameActive(true);
+  pendingAnswer = submitChatCategoryAnswer;
+  await say(data.say);
+}
+
+async function renderChatCategoryResult(result) {
+  appendChatMessage("vera", result.found.length ? `You named: ${result.found.join(", ")}.` : "No matches that time -- let's try again sometime!");
+  await say(result.say);
+  await celebrate(result.new_milestones);
+  setChatGameActive(false);
+}
+
+async function submitChatCategoryAnswer(answer) {
+  pendingAnswer = null;
+  let result;
+  try {
+    result = await callTool("submit_category_answer", { answer, user_id: currentUserId });
+  } catch {
+    setChatGameActive(false);
+    await say("Something went wrong. Let's try again sometime.");
+    return;
+  }
+  await renderChatCategoryResult(result);
 }
 
 // ---------- games ----------
@@ -1481,6 +1754,9 @@ function describeActivity(a) {
     if ("count" in d && "target" in d) return `${label}: named ${d.count} of ${d.target}`;
     if ("attempts" in d) return `${label}: ${d.attempts} flips`;
     return label;
+  }
+  if (a.type === "chat_game") {
+    return `Chat game: ${(a.details && a.details.game_name) || "a talking game"}`;
   }
   const feeling = a.details && a.details.feeling ? `, felt ${a.details.feeling}` : "";
   return `${label}: ${a.minutes} minutes${feeling}`;

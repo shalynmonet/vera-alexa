@@ -579,6 +579,48 @@ html, body {
 
 .chip-btn:hover, .chip-btn:focus { background: var(--border); }
 .chip-btn:active { transform: scale(0.97); }
+
+/* An inline game (word recall, matching pairs, finish the saying, word
+   categories) played right in the transcript instead of its own screen --
+   same card look as a Vera message, just roomier for a board or choices. */
+.chat-game-card { max-width: 96%; width: 100%; }
+
+.chat-game-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.2rem;
+  margin-bottom: 8px;
+}
+
+.chat-game-prompt { font-size: 1.3rem; margin-bottom: 10px; }
+
+.chat-game-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.chat-game-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chat-game-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  max-width: 420px;
+  margin: 6px 0;
+}
+
+.chat-game-board .match-card { font-size: 1.8rem; }
+
+@media (max-width: 700px) {
+  .chat-game-board { grid-template-columns: repeat(3, 1fr); max-width: 320px; }
+}
+
 .engagement-list .say-text { margin: 4px 0; }
 
 .badge {

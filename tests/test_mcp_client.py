@@ -395,3 +395,40 @@ def test_cheer_goal_counter_is_per_family_member(tmp_path):
             assert len(maya_sent) == 2
 
     asyncio.run(run())
+
+
+def test_log_chat_game_flow(tmp_path):
+    """A free-form talking game played in Chat (20 Questions, a riddle,
+    word association, ...) has no dedicated start/submit tools -- Nova just
+    plays it, then calls log_chat_game once it's actually finished. Should
+    count toward the streak/weekly goal/milestones like any other logged
+    activity, show up with its own game_name in the day detail, and never
+    count toward the "tried every game" milestone (that's about the four
+    Games-screen games specifically)."""
+    async def run():
+        async with _server_session(tmp_path) as s:
+            await s.call_tool("set_profile", {"name": "Rose"})
+
+            logged = _data(await s.call_tool("log_chat_game", {"game_name": "20 Questions", "minutes": 6}))
+            assert logged["logged"] is True
+            assert logged["game_name"] == "20 Questions"
+            assert logged["streak"]["current"] == 1
+            assert "first_session" in {m["id"] for m in logged["new_milestones"]}
+
+            log = _data(await s.call_tool("get_fitness_log", {}))
+            assert log["totals"]["chat_game"] == 1
+            assert log["week"]["active_minutes"] == 6
+            assert "tried_every_game" not in {m["id"] for m in log["milestones"]}
+
+            detail = _data(await s.call_tool("get_day_detail", {}))
+            chat_game_entry = next(a for a in detail["activities"] if a["type"] == "chat_game")
+            assert chat_game_entry["details"]["game_name"] == "20 Questions"
+
+            # A near-zero duration is floored, not recorded as a 0-minute
+            # no-op that would look like nothing really happened.
+            floored = _data(await s.call_tool("log_chat_game", {"game_name": "Word association", "minutes": 0}))
+            assert floored["logged"] is True
+            log_after = _data(await s.call_tool("get_fitness_log", {}))
+            assert log_after["totals"]["chat_game"] == 2
+
+    asyncio.run(run())
