@@ -50,6 +50,10 @@ function rememberUserId(userId) {
 
 let current = "start";
 let activeTimers = [];     // interval/timeout ids to clear on screen change
+let navToken = 0;          // bumped on every showScreen() -- lets a slow background
+                            // chain (e.g. the Home greeting's Bedrock call) notice it's
+                            // stale and skip speaking/showing its reply after the person
+                            // has already moved to a different screen
 let micListening = false;
 let listenController = null; // active startListening() controller, or null when not listening
 let veraSpeaking = false;
@@ -70,8 +74,18 @@ function clearActiveTimers() {
 
 function showScreen(name) {
   const leaving = current;
+  navToken += 1;
   clearActiveTimers();
   Companion.setVideoMode(false);
+  // Whatever Vera was already saying belonged to the screen we're leaving
+  // -- stop the audio and clear her speech bubble immediately so it
+  // doesn't linger into the new screen. This runs before the leaving
+  // screen's own cleanup just below, which may trigger a short message of
+  // its own (e.g. stopping a meditation early says "That's okay, we can
+  // finish another time") -- that one should still play normally rather
+  // than being cut off by this.
+  stopSpeaking();
+  Companion.showBubble(null);
   if (leaving === "meditation" && name !== "meditation") stopMeditationEarly();
   if (leaving === "stretch" && name !== "stretch") {
     const video = el("stretch-video").querySelector("video");
@@ -500,6 +514,7 @@ async function captureSpeech() {
 // ---------- home ----------
 
 async function renderHome() {
+  const myToken = navToken; // lets the greeting below notice if we've navigated away
   el("home-greeting").textContent = `${greetingWord()}`;
   el("home-sub").textContent = "Let's see what Vera has for you today.";
   updateHomeCheersBadge();
@@ -528,19 +543,26 @@ async function renderHome() {
     try {
       const result = await greet(currentUserId);
       conversationHistory = (result.history || []).slice(-MAX_HISTORY);
-      if (result.reply) {
+      // The person may have already tapped into another screen while that
+      // Bedrock call was still in flight -- if so, this greeting is stale:
+      // still worth keeping in conversationHistory (it really did happen),
+      // but it should neither speak over nor overwrite whatever that other
+      // screen is now saying.
+      if (result.reply && navToken === myToken) {
         await say(result.reply);
+        greeted = true;
+      } else if (result.reply) {
         greeted = true;
       }
     } catch {
       // Bedrock unavailable -- fall back to the simple greeting below.
     }
-    if (!greeted) {
+    if (!greeted && navToken === myToken) {
       await say(streak > 0
         ? `${greetingWord()}, ${profile.name}. You're on a ${streak} day streak!`
         : `${greetingWord()}, ${profile.name}. What would you like to do today?`);
     }
-    await tryPlayNextCheer({ onAppOpen: true });
+    if (navToken === myToken) await tryPlayNextCheer({ onAppOpen: true });
     return;
   }
 
