@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from vera import cloud_storage
 from vera.family import MAX_CHEER_SECONDS, cheer_s3_key
 
-from . import mcp_bridge, polly_tts, ses_email, sms
+from . import auth, mcp_bridge, polly_tts, rate_limit, ses_email, sms
 
 try:
     from . import bedrock_chat
@@ -36,6 +36,12 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 CHEER_MEDIA_DIR = Path(__file__).resolve().parent / "cheer_media"
 CHEER_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 MAX_CHEER_BYTES = 20 * 1024 * 1024  # generous for a 15 second clip; rejects anything clearly wrong
+ALLOWED_MEDIA_TYPES = {"voice", "voice_photo", "video"}
+# Broad category check (not exact mimetype matching) since MediaRecorder's
+# content_type varies by browser/codec, e.g. 'video/webm;codecs=vp8,opus' --
+# this still blocks anything that isn't actually audio/video/image.
+ALLOWED_AV_PREFIXES = ("audio/", "video/")
+ALLOWED_IMAGE_PREFIXES = ("image/",)
 
 class NoCacheStaticFiles(StaticFiles):
     """Static files change constantly during development/demos; without an
@@ -51,6 +57,43 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 app = FastAPI(title="Vera Web Simulator")
+app.add_middleware(auth.AccessCodeMiddleware)
+
+
+# ---------- Access code / demo login ----------
+# A no-op (every request is "full" access) unless VERA_ACCESS_CODE is set --
+# see web/auth.py for why a signed cookie is enough here instead of a real
+# session store, and which paths (family cheer links, static assets) skip
+# this gate entirely.
+
+@app.get("/login")
+async def login_page():
+    return FileResponse(str(STATIC_DIR / "login.html"))
+
+
+@app.post("/api/login")
+async def api_login(payload: dict):
+    if not auth.enabled() or auth.check_code(payload.get("code", "")):
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie(auth.AUTH_COOKIE, auth.make_cookie_value("full"),
+                         max_age=auth.COOKIE_MAX_AGE, httponly=True, samesite="lax")
+        return resp
+    raise HTTPException(status_code=401, detail="Incorrect code.")
+
+
+@app.post("/api/demo-login")
+async def api_demo_login():
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(auth.AUTH_COOKIE, auth.make_cookie_value("demo"),
+                     max_age=auth.COOKIE_MAX_AGE, httponly=True, samesite="lax")
+    return resp
+
+
+@app.post("/api/logout")
+async def api_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.AUTH_COOKIE)
+    return resp
 
 
 @app.get("/api/tools")
@@ -59,20 +102,39 @@ async def api_list_tools():
 
 
 @app.post("/api/tool/{name}")
-async def api_call_tool(name: str, arguments: dict | None = None):
+async def api_call_tool(name: str, request: Request, arguments: dict | None = None):
+    arguments = dict(arguments or {})
+    if auth.is_demo(request):
+        # create_profile and list_profiles both operate across every
+        # profile in the store rather than one pinned user_id -- a real
+        # family's profile names/ids would otherwise be visible from (or
+        # creatable by) the no-code demo button, so each needs its own
+        # special case rather than the usual user_id override below.
+        if name == "create_profile":
+            raise HTTPException(status_code=403, detail="The demo profile can't create new profiles.")
+        if name == "list_profiles":
+            try:
+                profile = await mcp_bridge.call_tool("get_profile", {"user_id": auth.DEMO_USER_ID})
+                demo_name = profile.get("name", "Demo")
+            except mcp_bridge.ToolError:
+                demo_name = "Demo"
+            return {"profiles": [{"user_id": auth.DEMO_USER_ID, "name": demo_name}]}
+        arguments["user_id"] = auth.DEMO_USER_ID
     try:
-        return await mcp_bridge.call_tool(name, arguments or {})
+        return await mcp_bridge.call_tool(name, arguments)
     except mcp_bridge.ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/chat")
-async def api_chat(payload: dict):
+async def api_chat(payload: dict, request: Request):
     if bedrock_chat is None:
         raise HTTPException(status_code=503, detail="Bedrock chat layer not configured.")
+    if not rate_limit.chat_limiter.allow(auth.device_id(request)):
+        raise HTTPException(status_code=429, detail="Too many requests -- please wait a moment and try again.")
     message = payload.get("message", "")
     history = payload.get("history", [])
-    user_id = payload.get("user_id", "demo")
+    user_id = auth.effective_user_id(request, payload.get("user_id", "demo"))
     try:
         result = await bedrock_chat.converse(message, history, user_id)
     except bedrock_chat.ChatError as e:
@@ -81,10 +143,12 @@ async def api_chat(payload: dict):
 
 
 @app.post("/api/greet")
-async def api_greet(payload: dict):
+async def api_greet(payload: dict, request: Request):
     if bedrock_chat is None:
         raise HTTPException(status_code=503, detail="Bedrock chat layer not configured.")
-    user_id = payload.get("user_id", "demo")
+    if not rate_limit.chat_limiter.allow(auth.device_id(request)):
+        raise HTTPException(status_code=429, detail="Too many requests -- please wait a moment and try again.")
+    user_id = auth.effective_user_id(request, payload.get("user_id", "demo"))
     try:
         result = await bedrock_chat.greet(user_id)
     except bedrock_chat.ChatError as e:
@@ -93,7 +157,9 @@ async def api_greet(payload: dict):
 
 
 @app.post("/api/speak")
-async def api_speak(payload: dict):
+async def api_speak(payload: dict, request: Request):
+    if not rate_limit.speak_limiter.allow(auth.device_id(request)):
+        raise HTTPException(status_code=429, detail="Too many requests -- please wait a moment and try again.")
     text = (payload.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -154,6 +220,14 @@ async def api_cheer_upload(
 ):
     if duration_seconds > MAX_CHEER_SECONDS + 1:
         raise HTTPException(status_code=400, detail=f"Cheers are {MAX_CHEER_SECONDS} seconds max.")
+    if duration_seconds <= 0:
+        raise HTTPException(status_code=400, detail="That recording looks empty.")
+    if media_type not in ALLOWED_MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail="Unrecognized recording type.")
+    if not (file.content_type or "").startswith(ALLOWED_AV_PREFIXES):
+        raise HTTPException(status_code=400, detail="That file doesn't look like an audio or video recording.")
+    if photo is not None and not (photo.content_type or "").startswith(ALLOWED_IMAGE_PREFIXES):
+        raise HTTPException(status_code=400, detail="That file doesn't look like a photo.")
     try:
         resolved = await mcp_bridge.call_tool("resolve_family_token", {"token": token})
     except mcp_bridge.ToolError as e:
@@ -214,7 +288,7 @@ async def api_cheer_notify(payload: dict, request: Request):
     VERA_SMS_ENABLED is on and the family member has a phone on file) --
     copying the record link always works regardless of whether this
     succeeds."""
-    user_id = payload.get("user_id", "demo")
+    user_id = auth.effective_user_id(request, payload.get("user_id", "demo"))
     family_id = payload.get("family_id")
     milestone_id = payload.get("milestone_id")
 
@@ -262,7 +336,7 @@ async def api_family_check_alerts(payload: dict, request: Request):
     whose unlocked-cheer queue just dropped to 1 or 0, then marks it sent
     so it isn't repeated. Best-effort -- a failed send just gets retried
     next time the dashboard loads."""
-    user_id = payload.get("user_id", "demo")
+    user_id = auth.effective_user_id(request, payload.get("user_id", "demo"))
     alerts = (await mcp_bridge.call_tool("check_family_alerts", {"user_id": user_id}))["alerts"]
     sent = []
     for a in alerts:
@@ -288,10 +362,12 @@ async def tv_display_page(user_id: str):
 
 
 @app.get("/api/display/events/{user_id}")
-async def api_display_events(user_id: str):
+async def api_display_events(user_id: str, request: Request):
     """Server-sent events so the TV display (and the main screen's 'Now
     playing on Living Room TV' banner) update the moment a session is
     handed off or brought back, instead of a client polling loop."""
+    user_id = auth.effective_user_id(request, user_id)
+
     async def events():
         last_payload = None
         while True:

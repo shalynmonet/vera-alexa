@@ -1,0 +1,11 @@
+[Unit]
+Description=Reset the Vera judge demo profile nightly
+
+[Timer]
+# 03:00 server time -- quiet hours, unlikely to interrupt anyone
+# actually clicking through the demo.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

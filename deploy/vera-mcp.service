@@ -1,0 +1,25 @@
+[Unit]
+Description=Vera MCP server
+After=network.target
+
+[Service]
+Type=simple
+User=vera
+Group=vera
+WorkingDirectory=/opt/vera
+EnvironmentFile=/etc/vera/.env
+Environment=VERA_HOST=127.0.0.1
+ExecStart=/opt/vera/.venv/bin/python server.py
+Restart=always
+RestartSec=3
+
+# Light sandboxing: this process only ever needs its own working
+# directory (for data/, web/cheer_media/, web/audio_cache/) plus the
+# network -- no reason to let it touch the rest of the filesystem.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vera
+
+[Install]
+WantedBy=multi-user.target

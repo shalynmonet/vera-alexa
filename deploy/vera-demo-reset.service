@@ -1,0 +1,16 @@
+[Unit]
+Description=Reset the Vera judge demo profile
+After=network.target
+
+[Service]
+Type=oneshot
+User=vera
+Group=vera
+WorkingDirectory=/opt/vera
+EnvironmentFile=/etc/vera/.env
+ExecStart=/opt/vera/.venv/bin/python deploy/reset_demo.py
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vera

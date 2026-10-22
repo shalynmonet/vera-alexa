@@ -1028,10 +1028,34 @@ def get_display_session(user_id: str = "demo") -> dict:
 
 
 def build_app():
-    """Streamable HTTP ASGI app with CORS so the browser based Alexa+ simulator can call it."""
+    """Streamable HTTP ASGI app with CORS (so the browser based Alexa+
+    simulator can call it) and, once VERA_MCP_TOKEN is set, a bearer-token
+    gate in front of everything."""
+    from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.middleware.cors import CORSMiddleware
+    from starlette.responses import JSONResponse
+
+    class BearerAuthMiddleware(BaseHTTPMiddleware):
+        """Requires `Authorization: Bearer <VERA_MCP_TOKEN>` on every
+        request once that env var is set -- this server has no other
+        access control of its own, so once it's reachable from the public
+        internet (behind the Caddy reverse proxy in production) this is
+        what stops a stranger from calling its tools directly. A no-op
+        when VERA_MCP_TOKEN is unset, same "optional unless configured"
+        pattern as everything else in this app, so local dev (and MCP
+        Inspector) still needs no token."""
+
+        def __init__(self, app, token: str | None):
+            super().__init__(app)
+            self.token = token
+
+        async def dispatch(self, request, call_next):
+            if self.token and request.headers.get("authorization") != f"Bearer {self.token}":
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return await call_next(request)
 
     app = mcp.streamable_http_app()
+    app.add_middleware(BearerAuthMiddleware, token=os.environ.get("VERA_MCP_TOKEN", "").strip() or None)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=os.environ.get("VERA_CORS_ORIGINS", "*").split(","),

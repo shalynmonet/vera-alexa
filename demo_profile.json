@@ -1,0 +1,43 @@
+{
+  "user_id": "judge_demo",
+  "name": "Judge Demo",
+  "weekly_goal_days": 4,
+  "activity_pattern": {
+    "27": ["stretch"],
+    "26": ["meditation"],
+    "24": ["stretch", "memory_game"],
+    "23": ["meditation"],
+    "20": ["stretch"],
+    "19": ["memory_game"],
+    "17": ["stretch", "meditation"],
+    "16": ["stretch"],
+    "13": ["meditation"],
+    "12": ["stretch"],
+    "10": ["memory_game"],
+    "9": ["stretch"],
+    "6": ["stretch", "meditation"],
+    "5": ["memory_game"],
+    "4": ["stretch"],
+    "3": ["meditation"],
+    "2": ["stretch", "memory_game"],
+    "1": ["meditation"]
+  },
+  "activity_minutes": {
+    "stretch": 8,
+    "meditation": 3,
+    "memory_game": 2
+  },
+  "memories": [
+    {"fact": "Loves spending afternoons in her garden", "days_ago": 5, "category": "hobby"},
+    {"fact": "Her grandson Sam just started high school", "days_ago": 2, "category": "family"}
+  ],
+  "family": [
+    {"name": "Sam", "phone": "+15555550199", "relationship": "Grandson"}
+  ],
+  "cheers": [
+    {"cheer_type": "milestone", "target": "streak_7", "status": "locked", "days_ago": 1},
+    {"cheer_type": "anytime", "target": null, "status": "unlocked", "days_ago": 2},
+    {"cheer_type": "anytime", "target": null, "status": "played", "days_ago": 5, "played": true},
+    {"cheer_type": "milestone", "target": "first_session", "status": "played", "days_ago": 20, "played": true}
+  ]
+}

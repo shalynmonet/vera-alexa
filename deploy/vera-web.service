@@ -1,0 +1,24 @@
+[Unit]
+Description=Vera web app
+After=network.target vera-mcp.service
+Wants=vera-mcp.service
+
+[Service]
+Type=simple
+User=vera
+Group=vera
+WorkingDirectory=/opt/vera
+EnvironmentFile=/etc/vera/.env
+Environment=WEB_HOST=127.0.0.1
+Environment=VERA_MCP_URL=http://127.0.0.1:8000/mcp
+ExecStart=/opt/vera/.venv/bin/python -m web.app
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vera
+
+[Install]
+WantedBy=multi-user.target

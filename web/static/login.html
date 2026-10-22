@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Vera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/style.css" />
+<style>
+  html, body { overflow: auto; }
+  #login-wrap {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    padding: 24px;
+    text-align: center;
+  }
+  #login-wrap h1 { font-family: var(--font-display); font-size: 2.4rem; margin: 0; }
+  #login-wrap p { color: var(--ink-soft); font-size: 1.2rem; max-width: 420px; margin: 0; }
+  #login-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 30px 28px;
+    width: 100%;
+    max-width: 380px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  #code-input {
+    font-size: 1.6rem;
+    text-align: center;
+    letter-spacing: 0.08em;
+    padding: 16px 20px;
+    border-radius: 18px;
+    border: 1px solid var(--border-soft);
+  }
+  #login-error { color: var(--danger); font-size: 1.05rem; min-height: 1.4em; }
+  #divider { display: flex; align-items: center; gap: 12px; color: var(--ink-soft); width: 100%; max-width: 380px; }
+  #divider::before, #divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+</style>
+</head>
+<body>
+<div id="login-wrap">
+  <img src="/img/vera-idle.webp" alt="Vera" style="width:140px;height:140px;object-fit:contain;" />
+  <h1>Welcome to Vera</h1>
+  <p>Enter the access code your family shared with you to continue.</p>
+
+  <div id="login-card">
+    <input id="code-input" type="password" inputmode="numeric" placeholder="Access code" autocomplete="off" autofocus />
+    <button id="login-btn" class="primary-btn">Enter</button>
+    <div id="login-error"></div>
+  </div>
+
+  <div id="divider">or</div>
+
+  <button id="demo-btn" class="secondary-btn" style="font-size:1.2rem; padding:16px 26px;">Try the Demo (no code needed)</button>
+  <p style="font-size:0.95rem;">The demo uses sample data only and resets every night.</p>
+</div>
+<script>
+  function nextPath() {
+    const params = new URLSearchParams(location.search);
+    const next = params.get("next");
+    return next && next.startsWith("/") ? next : "/";
+  }
+
+  async function submitCode() {
+    const input = document.getElementById("code-input");
+    const err = document.getElementById("login-error");
+    err.textContent = "";
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: input.value }),
+    });
+    if (res.ok) {
+      location.href = nextPath();
+    } else {
+      err.textContent = "That code didn't work. Please try again.";
+      input.value = "";
+      input.focus();
+    }
+  }
+
+  document.getElementById("login-btn").addEventListener("click", submitCode);
+  document.getElementById("code-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitCode();
+  });
+
+  document.getElementById("demo-btn").addEventListener("click", async () => {
+    const res = await fetch("/api/demo-login", { method: "POST" });
+    if (res.ok) location.href = "/";
+  });
+</script>
+</body>
+</html>

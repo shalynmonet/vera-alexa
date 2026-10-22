@@ -11,10 +11,20 @@ import json
 import os
 from typing import Any
 
+import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 VERA_MCP_URL = os.environ.get("VERA_MCP_URL", "http://127.0.0.1:8000/mcp")
+VERA_MCP_TOKEN = os.environ.get("VERA_MCP_TOKEN", "").strip() or None
+
+# A single shared client (reused, never closed -- this process lives as
+# long as the web app does) carrying the bearer token the MCP server
+# requires once VERA_MCP_TOKEN is set server-side. None -- the MCP
+# client's own default, unauthenticated -- when it isn't, so local dev
+# needs no token either, matching server.py's own "optional unless
+# configured" check.
+_HTTP_CLIENT = httpx.AsyncClient(headers={"Authorization": f"Bearer {VERA_MCP_TOKEN}"}) if VERA_MCP_TOKEN else None
 
 
 class ToolError(RuntimeError):
@@ -43,7 +53,7 @@ async def call_tool(name: str, arguments: dict[str, Any] | None = None) -> Any:
     # ExceptionGroup, which `except mcp_bridge.ToolError` in bedrock_chat.py
     # then fails to catch, crashing the whole chat turn instead of letting
     # Nova see the error and respond to it.
-    async with streamable_http_client(VERA_MCP_URL) as (read, write, _get_session_id):
+    async with streamable_http_client(VERA_MCP_URL, http_client=_HTTP_CLIENT) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(name, arguments or {})
@@ -51,7 +61,7 @@ async def call_tool(name: str, arguments: dict[str, Any] | None = None) -> Any:
 
 
 async def list_tools() -> list[dict[str, Any]]:
-    async with streamable_http_client(VERA_MCP_URL) as (read, write, _get_session_id):
+    async with streamable_http_client(VERA_MCP_URL, http_client=_HTTP_CLIENT) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = (await session.list_tools()).tools

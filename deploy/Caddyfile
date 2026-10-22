@@ -1,0 +1,16 @@
+vera.sha-i.com {
+	# The MCP endpoint first (more specific), everything else falls
+	# through to the web app.
+	handle /mcp* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Caddy issues and renews the TLS certificate for vera.sha-i.com
+	# automatically (Let's Encrypt, via ACME) -- nothing else to
+	# configure for HTTPS.
+	encode gzip
+}

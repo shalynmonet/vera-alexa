@@ -292,6 +292,7 @@ aws s3 sync web/static/media s3://your-bucket-name/media
 | **S3** | Optional storage for exercise/meditation videos and Family Cheers recordings, served back out via presigned URLs so the bucket can stay private. Required (not just nice to have) once the MCP server runs somewhere its local disk doesn't persist -- see Deployment below. |
 | **SES** | Optional: lets the caregiver dashboard email a family member their cheer-recording nudge directly, instead of only copying the link. Sandbox mode by default (sender and every recipient must be verified). |
 | **End User Messaging SMS** | Optional, off by default (`VERA_SMS_ENABLED`): automatic SMS nudges once a toll-free number is registered. The family invite itself never needs this -- it's a plain `sms:` link the caregiver's own phone sends. |
+| **Lightsail** | Hosts the production instance at `vera.sha-i.com` -- see [Deployment](#deployment). |
 
 ## Run it (Windows PowerShell)
 
@@ -338,14 +339,30 @@ Includes an end to end test that starts the server and calls every core tool thr
 | `VERA_SMS_ENABLED` | `false` | Turns on automatic SMS nudges (not the family invite, which is always a plain `sms:` link) |
 | `VERA_SMS_ORIGINATION_NUMBER` | *(none)* | Your registered toll-free number; required once `VERA_SMS_ENABLED=true` |
 | `AWS_REGION` | `us-east-1` | Region for S3/SMS (and Bedrock/Polly/SES, in the web simulator) |
+| `VERA_ACCESS_CODE` | *(none)* | One shared code the household enters to use the app/caregiver dashboard (remembered on the device); unset disables the login gate entirely -- see [Security](#security) |
+| `VERA_SECRET_KEY` | *(the access code itself)* | Signs the login cookie; only needed separately if you want to rotate it without also changing the access code |
+| `VERA_MCP_TOKEN` | *(none)* | Bearer token the MCP server requires on every request once set; the web app sends it automatically |
+| `VERA_DEMO_USER_ID` | `judge_demo` | The profile the no-code "Try the Demo" button is pinned to |
+| `VERA_RATE_LIMIT_CHAT_PER_DEVICE` / `_GLOBAL` | `20` / `200` | Requests per minute to `/api/chat` and `/api/greet` (Bedrock) |
+| `VERA_RATE_LIMIT_SPEAK_PER_DEVICE` / `_GLOBAL` | `40` / `400` | Requests per minute to `/api/speak` (Polly) |
+
+## Security
+
+Unconfigured (no `VERA_ACCESS_CODE`, no `VERA_MCP_TOKEN`), every security feature below is a no-op -- the same "optional unless configured" pattern as Polly/S3/SES, so local dev needs none of this. In production (see [Deployment](#deployment)), both are set.
+
+- **Access code login** (`web/auth.py`): one shared code from `VERA_ACCESS_CODE`, entered once and remembered on the device via a signed, long-lived cookie (no account system, no database -- the cookie's HMAC signature is unforgeable without the server's secret, and rotating the code invalidates every existing cookie at once). Gates the main app and the caregiver dashboard; family cheer links (`/cheer/<token>`) and their APIs are never gated, since the private token *is* their auth.
+- **No-code judge demo** (`/login`'s "Try the Demo" button): grants access with no code at all, but every request in that session is pinned server-side to a fixed demo profile (`VERA_DEMO_USER_ID`, default `judge_demo`) regardless of what `user_id` the client sends -- `create_profile` is refused outright and `list_profiles` only ever returns the demo profile, so a real family's data is never reachable from it. That profile resets nightly from `demo_profile.json` (`deploy/reset_demo.py`, via the `vera-demo-reset` systemd timer), so it never accumulates stale state from earlier visitors.
+- **MCP bearer token** (`server.py`'s `BearerAuthMiddleware`): once `VERA_MCP_TOKEN` is set, every request to `/mcp` needs `Authorization: Bearer <token>` -- the only thing standing between the public internet and this server's tools once it's reachable behind Caddy. `web/mcp_bridge.py` sends it automatically.
+- **Rate limiting** (`web/rate_limit.py`): per-device and global caps (requests per minute) on `/api/chat`, `/api/greet`, and `/api/speak` -- the three endpoints that cost real AWS money per call.
+- **Upload validation** (`/api/cheer/upload/<token>`): rejects a cheer recording over 15 seconds or 20MB, and whose content type isn't actually audio/video (photo uploads similarly must be an image) -- before ever touching disk or calling an MCP tool. Uploaded files are always saved under server-generated, random filenames (never a user-supplied name or path), and served back out only through `StaticFiles` mounts scoped to their own directories (`web/cheer_media/`, `web/audio_cache/`), so nothing outside those folders is ever reachable.
+
+See `tests/test_web_auth.py`, `tests/test_mcp_bearer_auth.py`, and `tests/test_demo_reset.py` for the tests covering all of the above.
 
 ## Deployment
 
-For this submission, the MCP server (`server.py`) runs locally, the same `python server.py` from Run it above, alongside the web simulator on the same machine. AWS App Runner was the original plan for giving it a public HTTPS endpoint, but App Runner is currently closed to new customers, so that path isn't available right now.
+**In production, this runs for real** at `https://vera.sha-i.com` -- an AWS Lightsail Ubuntu instance running the MCP server and web app as systemd services (auto-restart on failure and on reboot) behind Caddy, which handles HTTPS automatically. See **[deploy/DEPLOY.md](deploy/DEPLOY.md)** for the full step-by-step (creating the instance, DNS, running `deploy/setup.sh`, an AWS Budgets alert) and the [Security](#security) section above for what's gating public access. `deploy/update.sh` pulls the latest code and restarts both services for later updates.
 
-**Planned deployment path: Amazon ECS Express Mode.** Once available, this would containerize `server.py` (a small Dockerfile around the existing `pip install -r requirements.txt` + `python server.py`) and deploy it to ECS using Express Mode's simplified setup -- a public HTTPS endpoint without hand-writing a task definition or provisioning a cluster/VPC from scratch. The same `VERA_HOST=0.0.0.0` and `VERA_PORT` env vars would carry over unchanged; `VERA_MCP_URL` on the web simulator would just point at whatever endpoint ECS Express Mode hands back.
-
-**Known limitation either way:** `data/vera.json` is a local JSON file, which is fine for a single always-on instance but won't survive a redeploy, and won't be shared if you scale past one instance. `vera/storage.py`'s `Store` class is a narrow, three-method interface (`get_user`/`save_user`/`list_users`/...) specifically so swapping it for DynamoDB later wouldn't touch any tool's logic -- just not done here, to keep this a one-file, zero-infrastructure demo.
+**Known limitation:** `data/vera.json` is a local JSON file on that one instance -- fine for a single always-on box (which is what this is), but it won't survive a redeploy to a *different* instance, and won't be shared if this ever scales past one. `vera/storage.py`'s `Store` class is a narrow, three-method interface (`get_user`/`save_user`/`list_users`/...) specifically so swapping it for DynamoDB later wouldn't touch any tool's logic -- just not needed at this scale.
 
 ## Web simulator
 
