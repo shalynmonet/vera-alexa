@@ -74,6 +74,11 @@ for ago in sorted(pattern, reverse=True):
         user["activities"].append({"type": t, "date": d.isoformat(), "minutes": minutes[t], "details": details})
     progress.check_milestones(user, d)  # award badges on the day they were earned
 
+user["memories"] = [
+    {"fact": "She loves spending afternoons in her garden", "recorded_on": (today - timedelta(days=5)).isoformat(), "category": "hobby"},
+    {"fact": "Her granddaughter Destiny has a volleyball game this weekend", "recorded_on": (today - timedelta(days=2)).isoformat(), "category": "family"},
+]
+
 member = {
     "id": family.new_id(),
     "name": "Jake",

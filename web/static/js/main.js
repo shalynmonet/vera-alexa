@@ -2,12 +2,13 @@ import { callTool, chat, greet } from "./api.js";
 import { listen, speechRecognitionSupported } from "./speech.js";
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "./voice.js";
 import { Companion } from "./companion.js";
+import { buildChatChips, nextReplacementChip } from "./chat-chips.js";
 
-const SCREENS = ["start", "home", "games", "memory", "matching", "saying", "category", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity", "cheers"];
+const SCREENS = ["start", "home", "games", "memory", "matching", "saying", "category", "exercise", "stretch", "meditation", "progress", "log-activity", "timed-activity", "cheers", "chat"];
 const PARENT_SCREEN = {
   games: "home", memory: "games", matching: "games", saying: "games", category: "games",
   exercise: "home", stretch: "exercise", "log-activity": "exercise", "timed-activity": "exercise",
-  meditation: "home", progress: "home", cheers: "home",
+  meditation: "home", progress: "home", cheers: "home", chat: "home",
 };
 const GAME_ICONS = { memory_game: "🧠", matching_game: "🃏", saying_game: "📜", category_game: "🗂️" };
 const ENCOURAGEMENTS = [
@@ -89,6 +90,7 @@ function showScreen(name) {
   if (name === "progress") renderProgress();
   if (name === "log-activity") resetLogActivity();
   if (name === "cheers") renderCheersScreen();
+  if (name === "chat") initChatScreen();
 }
 
 function goBack() {
@@ -283,6 +285,8 @@ function selectProfile(userId) {
   currentUserId = userId;
   conversationHistory = [];
   greetedThisSession = false;
+  chatOpenedThisVisit = false;
+  el("chat-transcript").innerHTML = "";
   rememberUserId(userId);
   showScreen("home");
 }
@@ -301,28 +305,45 @@ async function routeUtterance(text) {
     return;
   }
 
-  try {
-    const result = await chat(text, conversationHistory, currentUserId);
-    conversationHistory = (result.history || conversationHistory).slice(-MAX_HISTORY);
-    if (result.reply) await say(result.reply);
-    await handleBedrockToolCalls(result.tool_calls || []);
-    return;
-  } catch {
-    // Bedrock chat isn't configured, or the request failed (network, AWS
-    // permissions, etc). Fall back to simple keyword routing so the demo
-    // still works without it.
+  // On the Chat screen, both sides of the conversation show as large
+  // captions, and the starter chips hide while Vera's turn is in flight
+  // (speech request + spoken reply) so they're never tapped mid-reply.
+  const inChat = current === "chat";
+  if (inChat) {
+    appendChatMessage("user", text);
+    el("chat-chips").classList.add("hidden");
   }
+  try {
+    try {
+      const result = await chat(text, conversationHistory, currentUserId);
+      conversationHistory = (result.history || conversationHistory).slice(-MAX_HISTORY);
+      if (result.reply) {
+        if (inChat) appendChatMessage("vera", result.reply);
+        await say(result.reply);
+      }
+      await handleBedrockToolCalls(result.tool_calls || []);
+      return;
+    } catch {
+      // Bedrock chat isn't configured, or the request failed (network, AWS
+      // permissions, etc). Fall back to simple keyword routing so the demo
+      // still works without it.
+    }
 
-  const intent = parseIntent(text);
-  if (intent === "home") { showScreen("home"); return; }
-  if (intent === "memory") { showScreen("memory"); startMemoryGame(); return; }
-  if (intent === "matching") { showScreen("matching"); startMatchingGame(); return; }
-  if (intent === "saying") { showScreen("saying"); startSayingGame(); return; }
-  if (intent === "category") { showScreen("category"); startCategoryGame(); return; }
-  if (intent === "stretch") { showScreen("stretch"); startStretch(); return; }
-  if (intent === "meditation") { showScreen("meditation"); return; }
-  if (intent === "progress") { showScreen("progress"); return; }
-  await say(`I heard "${text}". Try saying memory game, matching pairs, finish the saying, word categories, chair stretch, meditation, or my progress.`);
+    const intent = parseIntent(text);
+    if (intent === "home") { showScreen("home"); return; }
+    if (intent === "memory") { showScreen("memory"); startMemoryGame(); return; }
+    if (intent === "matching") { showScreen("matching"); startMatchingGame(); return; }
+    if (intent === "saying") { showScreen("saying"); startSayingGame(); return; }
+    if (intent === "category") { showScreen("category"); startCategoryGame(); return; }
+    if (intent === "stretch") { showScreen("stretch"); startStretch(); return; }
+    if (intent === "meditation") { showScreen("meditation"); return; }
+    if (intent === "progress") { showScreen("progress"); return; }
+    const fallback = `I heard "${text}". Try saying memory game, matching pairs, finish the saying, word categories, chair stretch, meditation, or my progress.`;
+    if (inChat) appendChatMessage("vera", fallback);
+    await say(fallback);
+  } finally {
+    if (inChat) el("chat-chips").classList.remove("hidden");
+  }
 }
 
 // Dispatch tool calls Bedrock made during a chat turn to the matching
@@ -546,6 +567,67 @@ async function renderCheersScreen() {
       renderCheersScreen();
     });
   });
+}
+
+// ---------- chat ----------
+// A free-form conversation with Vera, reusing the same Nova chat loop and
+// transcript-building hook as routeUtterance uses for voice/typed input
+// everywhere else -- this screen just also *displays* both sides as large
+// captions and offers tappable starter chips above the mic. Two chip slots
+// personalize from get_memories when there's something to draw on; a used
+// chip is swapped for a fresh one (another memory first, a default phrase
+// once memories run out) instead of staying put and going stale.
+
+let chatOpenedThisVisit = false;
+let chatChips = [];
+let chatChipState = { memoryReserve: [], defaultCursor: 0 };
+
+function appendChatMessage(role, text) {
+  const transcript = el("chat-transcript");
+  const bubble = document.createElement("div");
+  bubble.className = `chat-msg chat-msg-${role}`;
+  bubble.textContent = text;
+  transcript.appendChild(bubble);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function renderChatChips() {
+  const row = el("chat-chips");
+  row.innerHTML = chatChips.map((text, i) => `<button class="chip-btn" data-idx="${i}">${escapeHtml(text)}</button>`).join("");
+  row.querySelectorAll(".chip-btn").forEach((btn) => {
+    btn.addEventListener("click", () => useChatChip(Number(btn.dataset.idx)));
+  });
+}
+
+async function useChatChip(idx) {
+  const text = chatChips[idx];
+  if (!text) return;
+  chatChips[idx] = nextReplacementChip(chatChipState);
+  await routeUtterance(text);
+  renderChatChips();
+}
+
+async function initChatChips() {
+  let memories = [];
+  try {
+    memories = (await callTool("get_memories", { user_id: currentUserId, limit: 6 })).memories;
+  } catch {
+    // No personalization this time -- the default chips still work fine.
+  }
+  const built = buildChatChips(memories);
+  chatChips = built.chips;
+  chatChipState = { memoryReserve: built.memoryReserve, defaultCursor: built.defaultCursor };
+  renderChatChips();
+}
+
+async function initChatScreen() {
+  await initChatChips();
+  if (!chatOpenedThisVisit) {
+    chatOpenedThisVisit = true;
+    const greeting = "What's on your mind? Tap a card below, or just talk to me.";
+    appendChatMessage("vera", greeting);
+    await say(greeting);
+  }
 }
 
 // ---------- games ----------

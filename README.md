@@ -109,6 +109,18 @@ milestone she's close to, and suggests one activity (without starting it).
 If Bedrock isn't configured, Home falls back to the simple streak-based
 greeting from Day 2.
 
+### Chat with Vera
+
+A dedicated Chat screen for a free-form conversation, reusing the exact same Nova chat loop as every other screen's mic/type input -- both sides of the conversation show as large captions, and five tappable starter chips sit above the mic:
+
+> "Tell me a story" &middot; "Let's talk about the old days" &middot; "Tell me something that will make me smile" &middot; "What should we do next?" &middot; "Tell me a fun fact from history"
+
+Up to two of the five chips personalize from `get_memories` (e.g. a remembered family event or hobby); the chip-selection logic is a small, dependency-free module (`web/static/js/chat-chips.js`) so it can be unit tested directly under Node (`tests/test_chat_chips.py`) rather than only by hand in a browser. Tapping a used chip swaps it for a fresh one -- another memory first, then a default -- so the row doesn't go stale; the chips hide while Vera's reply is in flight and reappear once she's done.
+
+"Let's talk about the old days" leads Nova into asking one gentle reminiscence question at a time (first job, hometown, a favorite song, how she met someone), saving anything meaningful with `remember_fact`. "What should we do next?" has Nova check `get_fitness_log`, `get_streak`, and `get_planned_activities` and suggest one specific thing, falling back to friendly discovery questions (a hobby, something around the house) once everything available has already been done for the day.
+
+Because this screen invites open-ended conversation rather than a fixed set of commands, the system prompt carries a few firm boundaries that override everything else, including the usual short-reply style: never medical advice, a diagnosis, or medication guidance (suggest her doctor or family instead); a mentioned fall, chest pain, trouble breathing, or urgent need for help gets an immediate, verbatim "Please call 911 or use your emergency button right now" *before* any sympathy -- Nova Lite needed that exact required sentence, not just a general instruction to take it seriously, to say it reliably; sadness or loneliness gets real warmth and an offer to help her feel connected to family (replaying a cheer, calling someone); and Vera never asks for money, bank/card details, a password, or a Social Security number, and warns that a caller or message asking for them may be a scam. See `tests/test_bedrock_chat.py` for the guardrail prompt tests.
+
 ### Exercise and meditation media
 
 Real videos and audio are described by a hand-edited `manifest.json` next to each category (title, minutes, file, thumbnail, and for exercise, narration steps). `vera/media.py` resolves each manifest entry's file to a playable URL -- from the S3 bucket if one's configured and the file has been uploaded there, otherwise from local disk -- and reports the routine as `available` only once the file actually exists somewhere, so a routine with no recording yet simply shows a friendly "coming soon" card. No code change is needed either way: drop the file in locally, or upload it to the bucket, with the exact filename the manifest expects. The four exercise routines (chair stretch, seated strength, balance, gentle walking) ship as narration-only placeholders today; meditations are built from whatever real files already exist (currently one: "Healing Affirmations"). See [Media storage](#media-storage-local-vs-s3) below for the folder/bucket layout.
@@ -356,7 +368,7 @@ A start screen lets each person in the household pick their own profile
 shared Echo -- so progress is kept separately per person. The choice is
 remembered per device (localStorage), so future visits skip straight to
 Home; tapping "Not you? Switch person" brings the picker back. From there,
-home has five sections -- Games, Exercise, Meditations, Progress, Cheers --
+home has six sections -- Games, Exercise, Meditations, Progress, Cheers, Chat --
 each backed by its own MCP tool(s) so new games or routines show up
 automatically. Every screen but Home has a clearly labeled "← Back" button
 to its parent screen (Home's own tiles are the entry points, so it needs

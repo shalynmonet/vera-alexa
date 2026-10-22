@@ -34,6 +34,7 @@ const SECTION_POSE = {
   meditation: "meditating",
   progress: "celebrating",
   cheers: "celebrating",
+  chat: "idle",
 };
 
 let root, img, bubble;
