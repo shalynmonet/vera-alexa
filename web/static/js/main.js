@@ -294,6 +294,16 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+// Word Categories: every valid answer gets a big check-marked chip, in the
+// order Vera heard them -- anything past the round's goal gets a small
+// "above and beyond" sparkle instead of being left uncounted.
+function renderCategoryChips(found, target) {
+  return found.map((word, i) => {
+    const beyond = i >= target;
+    return `<span class="category-chip${beyond ? " beyond-goal" : ""}">${escapeHtml(word)}</span>`;
+  }).join("");
+}
+
 function sleep(ms) {
   return new Promise((resolve) => trackTimer(setTimeout(resolve, ms)));
 }
@@ -1077,7 +1087,14 @@ async function renderChatCategoryRound(data) {
 }
 
 async function renderChatCategoryResult(result) {
-  appendChatMessage("vera", result.found.length ? `You named: ${result.found.join(", ")}.` : "No matches that time -- let's try again sometime!");
+  if (result.found.length) {
+    appendChatGameCard(`
+      <div class="chat-game-title">Word Categories</div>
+      <div class="category-chips">${renderCategoryChips(result.found, result.target)}</div>
+    `);
+  } else {
+    appendChatMessage("vera", "No matches that time -- let's try again sometime!");
+  }
   await say(result.say);
   await celebrate(result.new_milestones);
   setChatGameActive(false);
@@ -1378,9 +1395,9 @@ async function submitCategoryAnswer(answer) {
 async function renderCategoryResult(result) {
   el("category-answer-row").classList.add("hidden");
   el("category-prompt").textContent = "";
-  el("category-result").textContent = result.found.length
-    ? `You named: ${result.found.join(", ")}.`
-    : "No matches that time — let's try again!";
+  el("category-result").innerHTML = result.found.length
+    ? `<div class="category-chips">${renderCategoryChips(result.found, result.target)}</div>`
+    : `<div class="say-text">No matches that time — let's try again!</div>`;
   el("category-result").classList.remove("hidden");
   el("category-again-btn").classList.remove("hidden");
   await say(result.say);

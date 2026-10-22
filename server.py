@@ -14,7 +14,7 @@ from datetime import date, datetime
 
 from mcp.server.fastmcp import FastMCP
 
-from vera import engagement, family, matching_game, media, memories, memory_game, progress, saying_game, word_categories
+from vera import engagement, family, matching_game, media, memories, memory_game, progress, saying_game, word_categories, word_verify
 from vera.content import GAMES
 from vera.storage import Store
 
@@ -349,6 +349,43 @@ def submit_saying_answer(choice: str, user_id: str = "demo", on_date: str | None
 
 # ---------- Word categories ----------
 
+def _join_words(words: list[str]) -> str:
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0]
+    return ", ".join(words[:-1]) + f" and {words[-1]}"
+
+
+_MULTIPLE_WORDS = {2: "twice", 3: "three times", 4: "four times", 5: "five times"}
+
+
+def _category_say(category: str, count: int, target: int, unmatched: list[str]) -> str:
+    beyond = count - target
+    if beyond > 0:
+        multiple = count // target if target else 0
+        if multiple >= 2:
+            say = (
+                f"You named {count} {category}! The goal was {target}. "
+                f"That's {_MULTIPLE_WORDS.get(multiple, f'{multiple} times')} the goal, wonderful!"
+            )
+        else:
+            say = f"You named {count} {category} -- past your goal of {target}, wonderful!"
+    elif count >= target:
+        say = f"Wonderful! You named {count} {category}."
+    else:
+        say = f"You named {count} {category}. The goal was {target} -- nice try!"
+    if unmatched:
+        words = _join_words(unmatched)
+        if len(unmatched) == 1:
+            singular = category[:-1] if category.endswith("s") else category
+            article = "an " if singular[:1] in "aeiou" else "a "
+            say += f" I'm not sure {words} counts as {article}{singular}, but I love the creativity!"
+        else:
+            say += f" I'm not sure {words} count as {category}, but I love the creativity!"
+    return say
+
+
 @mcp.tool()
 def start_category_game(user_id: str = "demo", difficulty: int | None = None) -> dict:
     """Start a word categories round: name as many things as you can in a
@@ -371,26 +408,36 @@ def start_category_game(user_id: str = "demo", difficulty: int | None = None) ->
 @mcp.tool()
 def submit_category_answer(answer: str, user_id: str = "demo", on_date: str | None = None) -> dict:
     """Score a free-form list of items named for the current word category
-    round (forgiving of extra words, order, and small mishearings). Adapts
-    difficulty and logs the game."""
+    round (forgiving of extra words, order, duplicates, plurals, and small
+    mishearings). The goal is a target to reach, not a cap -- every valid
+    item counts, however many are named. A word the built-in list doesn't
+    recognize is checked with Vera's own judgment before being left out, so
+    an uncommon but real answer (like "platypus" for animals) still counts.
+    Adapts difficulty and logs the game."""
     u = store.get_user(user_id)
     state = u.get("category")
     if not state:
         return {"error": "No category round in progress. Call start_category_game first."}
     category, target = state["name"], state["target"]
-    result = word_categories.score_answer(category, answer)
+    result = word_categories.score_answer(category, answer, verify_unknown=word_verify.verify)
     count = result["count"]
     perfect = count >= target
+    beyond_goal = count > target
     nxt = word_categories.next_difficulty(target, count, target)
     response_seconds = _elapsed_seconds(state.get("started_at"))
     u["category"] = {"next_difficulty": nxt}
     details = {"category": category, "found": result["found"], "count": count, "target": target}
+    if result["unmatched"]:
+        details["unmatched"] = result["unmatched"]
     if response_seconds is not None:
         details["response_seconds"] = response_seconds
     new = _log(u, "category_game", 2, _today(on_date), details)
     store.save_user(u)
-    say = f"Wonderful! You named {count} {category}." if perfect else f"You named {count} {category}. The target was {target} -- nice try!"
-    return {**result, "category": category, "target": target, "perfect": perfect, "next_difficulty": nxt, "say": say, "new_milestones": new}
+    say = _category_say(category, count, target, result["unmatched"])
+    return {
+        **result, "category": category, "target": target, "perfect": perfect,
+        "beyond_goal": beyond_goal, "next_difficulty": nxt, "say": say, "new_milestones": new,
+    }
 
 
 # ---------- Guided sessions ----------

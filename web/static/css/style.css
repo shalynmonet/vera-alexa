@@ -208,6 +208,43 @@ html, body {
   border-radius: var(--pill);
 }
 
+/* Word Categories: every valid answer as a big check-marked chip, in the
+   order it was said -- anything past the round's goal gets a small sparkle
+   instead of just being left uncounted. */
+.category-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 1.4rem;
+  font-weight: 700;
+  padding: 10px 22px;
+  border-radius: var(--pill);
+}
+
+.category-chip::before {
+  content: "✓";
+  font-weight: 900;
+}
+
+.category-chip.beyond-goal {
+  background: var(--ink);
+  color: var(--accent-ink);
+}
+
+.category-chip.beyond-goal::after {
+  content: "✨";
+}
+
 /* ---------- Matching pairs ---------- */
 
 .matching-board {
