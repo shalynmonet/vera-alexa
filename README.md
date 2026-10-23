@@ -386,19 +386,28 @@ approximation (that API exposes no audio to analyse). Voice *input* stays
 the browser's SpeechRecognition either way, with the type-to-talk fallback
 for when that isn't available.
 
-Listening is continuous, not a single shot: `web/static/js/speech.js`'s
-`startListening()` runs with `continuous`/`interimResults` on, shows the
-live transcript in large text as she talks, and decides for itself when
-she's finished -- 3 seconds with no new speech, or tapping the large "I'm
-done talking" button -- rather than handing back whatever the browser's own
-recognizer caught before its first pause-triggered stop. Chrome still ends
-a recognition session on its own after a pause or about a minute even with
-`continuous: true`; when that happens mid-sentence, the same recognizer is
-restarted automatically and keeps appending to the running transcript, so
-from her side it never seems to stop listening. Tapping the mic again
-cancels without sending anything, and the mic only opens once Vera's own
-speech has finished (never while she's still talking, so she can't hear
-herself). See `tests/test_speech_listening.py` for the logic tests.
+Listening is continuous, not a single shot, via
+[**patient-listener**](https://github.com/shalynmonet/patient-listener) -- a
+small dependency-free library extracted from this project (`startListening()`
+used to live directly in `web/static/js/speech.js`; it's now vendored in from
+there, with speech.js kept as a thin wrapper). It runs with
+`continuous`/`interimResults` on, shows the live transcript in large text as
+she talks, and decides for itself when she's finished -- 3 seconds with no
+new speech, or tapping the large "I'm done talking" button -- rather than
+handing back whatever the browser's own recognizer caught before its first
+pause-triggered stop. Chrome still ends a recognition session on its own
+after a pause or about a minute even with `continuous: true`; when that
+happens mid-sentence, the same recognizer is restarted automatically and
+keeps appending to the running transcript, so from her side it never seems
+to stop listening. On iPhone Safari, where results are often never marked
+final at all, it falls back to whatever was last shown on screen instead of
+silently losing it. Tapping the mic again cancels without sending anything;
+the mic can open even while Vera's still talking (her own
+`SpeechRecognition.start()` has to run synchronously inside the tap on iOS
+Safari, so nothing can await her finishing first) -- in practice a
+conversational turn this short rarely catches her still mid-sentence. See
+`tests/test_speech_listening.py` for Vera's own integration of it, and the
+library's own tests for the transcript logic itself.
 
 A start screen lets each person in the household pick their own profile
 ("Continue as Rose" / "Add a person") -- like Alexa's voice profiles on a

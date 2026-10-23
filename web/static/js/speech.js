@@ -2,6 +2,14 @@
 // Vera's voice, SpeechRecognition for listening). Both degrade gracefully:
 // speak() resolves immediately if unsupported, startListening()'s promise
 // resolves to null so callers always fall back to the type-to-talk box.
+//
+// Listening itself is handled by patient-listener (./vendor/patient-listener.js),
+// a standalone library extracted from this file: see
+// https://github.com/shalynmonet/patient-listener
+
+import { isSupported as patientListenerSupported } from "./vendor/patient-listener.js";
+
+export { startListening } from "./vendor/patient-listener.js";
 
 let voicesPromise = null;
 
@@ -67,146 +75,11 @@ export function speechSynthesisSupported() {
 }
 
 export function speechRecognitionSupported() {
-  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  return patientListenerSupported();
 }
 
-// How long to wait with no new speech before deciding she's finished talking.
-// The single place this is configured, per the "one config setting" ask.
-export const SILENCE_MS = 3000;
-
-// Continuous speech capture that decides for itself when the person is done
-// talking, instead of handing back whatever the browser's own recognizer
-// happened to catch before its first pause-triggered stop. Chrome (even
-// with continuous=true) still ends a recognition session on its own after a
-// pause or about a minute -- when that happens here, and we haven't decided
-// she's finished, the same recognizer is simply restarted and keeps
-// appending to the same running transcript, so from the caller's
-// perspective listening never stops until WE say so: either `silenceMs`
-// with nothing new, or the caller calling stop()/cancel().
-//
-// Known limitation: if Chrome's own session boundary lands mid-word, any
-// not-yet-finalized interim text from that instant is lost (the Web Speech
-// API gives no way to recover an interim result after its session ends) --
-// rare, and still strictly better than the old cut-off-at-first-pause
-// behavior, but not perfect.
-//
-// Returns a controller: { promise, stop, cancel, cancelled }.
-//   promise  resolves with the best transcript captured (a trimmed,
-//            non-empty string): finalTranscript if the recognizer ever
-//            actually marked anything isFinal, otherwise the last text
-//            that was shown as the live interim transcript -- iOS
-//            Safari's webkitSpeechRecognition in continuous mode often
-//            never sets isFinal at all, so insisting on a final result
-//            there means losing speech the person watched appear
-//            correctly on screen. Resolves null only if nothing was ever
-//            displayed, recognition isn't supported, or cancel() was
-//            called.
-//   stop()   finalizes now, resolving with whatever was captured so far
-//            (the "I'm done talking" button).
-//   cancel() discards everything and resolves with null (tap-the-mic-again).
-//   cancelled  true once cancel() has been called -- lets the caller skip
-//              an "I didn't catch that" message after an intentional cancel.
-export function startListening({ onInterim, silenceMs = SILENCE_MS } = {}) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const controller = { cancelled: false };
-  if (!SR) {
-    controller.promise = Promise.resolve(null);
-    controller.stop = () => {};
-    controller.cancel = () => { controller.cancelled = true; };
-    return controller;
-  }
-
-  let finalTranscript = "";
-  // The fullest text actually shown on screen so far -- survives a
-  // Chrome-style session restart (these live in startListening's own
-  // closure, not startSession's, so an onend-triggered restart below
-  // never resets them) and is the fallback resolve value when
-  // finalTranscript never got anything (the iOS case this fixes).
-  let lastDisplayedText = "";
-  let silenceTimer = null;
-  let finished = false;
-  let rec = null;
-  let resolvePromise;
-  controller.promise = new Promise((resolve) => { resolvePromise = resolve; });
-
-  function resetSilenceTimer() {
-    clearTimeout(silenceTimer);
-    silenceTimer = setTimeout(finish, silenceMs);
-  }
-
-  function finish() {
-    if (finished) return;
-    finished = true;
-    clearTimeout(silenceTimer);
-    if (rec) {
-      rec.onend = null; // this was a deliberate stop -- don't auto-restart
-      try { rec.stop(); } catch { /* already stopped */ }
-    }
-    const text = finalTranscript.trim() || lastDisplayedText.trim();
-    resolvePromise(controller.cancelled ? null : (text || null));
-  }
-
-  function startSession() {
-    rec = new SR();
-    rec.lang = "en-US";
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.maxAlternatives = 1;
-
-    rec.onresult = (e) => {
-      let finalPiece = "";
-      // Not +=: iOS reissues results cumulatively (each new one repeats
-      // the words from the last, with whatever's newly been heard tacked
-      // on), so concatenating every non-final result in range would
-      // double up the same words over and over. Only the latest one in
-      // this batch is ever the full-so-far interim text, final or not.
-      let latestInterim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const transcript = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalPiece += `${transcript} `;
-        else latestInterim = transcript;
-      }
-      if (finalPiece) finalTranscript += finalPiece;
-      const displayed = (finalTranscript + latestInterim).trim();
-      if (displayed) lastDisplayedText = displayed;
-      onInterim?.(displayed);
-      resetSilenceTimer();
-    };
-    rec.onerror = (e) => {
-      // "no-speech" / "aborted" are routine in continuous mode -- onend
-      // follows right after and restarts things below. A real permission
-      // problem is the one case worth giving up on.
-      if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
-        finish();
-      }
-    };
-    rec.onend = () => {
-      if (finished) return;
-      try {
-        rec.start();
-      } catch {
-        // Starting immediately after onend occasionally throws -- give the
-        // browser a beat and try once more rather than silently going deaf.
-        setTimeout(() => {
-          if (finished) return;
-          try { rec.start(); } catch { finish(); }
-        }, 250);
-      }
-    };
-    try {
-      rec.start();
-    } catch {
-      finish();
-    }
-  }
-
-  resetSilenceTimer();
-  startSession();
-
-  controller.stop = finish;
-  controller.cancel = () => {
-    controller.cancelled = true;
-    finish();
-  };
-  return controller;
-}
+// Listening itself -- accumulating across restarts, the silence-based
+// "she's done talking" timer, the iOS fallback-to-displayed-text behavior,
+// stop()/cancel() -- lives in patient-listener now (imported above); see
+// that library's own docs for the full behavior and the controller shape
+// (`{ promise, stop, cancel, cancelled }`) it returns.
