@@ -6,6 +6,7 @@
 
 let audioCtx = null;
 let currentAudio = null;
+let currentStop = null; // () => void -- properly settles the in-flight speakPolly() promise; see stopPolly()
 
 export function pollySupported() {
   return !!(window.AudioContext || window.webkitAudioContext);
@@ -29,10 +30,10 @@ export async function speakPolly(text, { onMouthOpen, onMouthClosed, onStart, on
   if (!res.ok) throw new Error(`Polly request failed (${res.status})`);
   const { url } = await res.json();
 
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-  }
+  // Same reasoning as stopPolly(): settle any still-in-flight previous
+  // playback's promise properly (fires its onEnd, resolves it) instead of
+  // just pausing the element and abandoning it mid-promise.
+  stopPolly();
 
   const ctx = ensureContext();
   const audio = new Audio(url);
@@ -67,7 +68,23 @@ export async function speakPolly(text, { onMouthOpen, onMouthClosed, onStart, on
       if (raf) cancelAnimationFrame(raf);
       raf = null;
       if (currentAudio === audio) currentAudio = null;
+      if (currentStop === stopThis) currentStop = null;
     };
+    // stopPolly() calling this (instead of pausing the element directly
+    // and abandoning the promise) is what matters: .pause() alone never
+    // fires onended, so without this, every caller's `await
+    // speakText(...)` -- and everything chained after it, e.g. say()'s
+    // own finally block that resets veraSpeaking -- hung forever the
+    // moment anything stopped her mid-sentence, silently breaking every
+    // reply after.
+    const stopThis = () => {
+      cleanup();
+      audio.pause();
+      onMouthClosed?.();
+      onEnd?.();
+      resolve();
+    };
+    currentStop = stopThis;
     audio.onplay = () => {
       onStart?.();
       sampleVolume();
@@ -91,10 +108,7 @@ export async function speakPolly(text, { onMouthOpen, onMouthClosed, onStart, on
 }
 
 export function stopPolly() {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-  }
+  currentStop?.();
 }
 
 export function pausePolly() {

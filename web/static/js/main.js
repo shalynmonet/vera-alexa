@@ -593,16 +593,18 @@ async function captureSpeech() {
   const row = el("listening-row");
   const transcriptEl = el("listening-transcript");
 
-  // Never listen while Vera is still talking -- but interrupt her and go
-  // straight to listening rather than awaiting veraSpeakingDone first.
-  // iOS Safari's SpeechRecognition only actually engages the microphone
-  // when .start() runs synchronously inside the tap's own event handler;
-  // any await before it (even one that resolves almost immediately) drops
-  // it out of that gesture, and recognition then silently starts "ok" but
-  // never captures audio or fires a single result -- the mic looks like
-  // it's listening (its own CSS animation doesn't know the difference)
-  // but nothing is ever actually heard.
-  if (veraSpeaking) stopSpeaking();
+  // No awaiting Vera to finish talking first (not even via stopSpeaking(),
+  // which itself resolves asynchronously): SpeechRecognition.start() only
+  // actually engages the microphone on iOS Safari when it runs
+  // synchronously inside the tap's own event handler. Any await before it
+  // -- even one that settles almost immediately -- drops it out of that
+  // gesture, and recognition then silently "starts" but never captures
+  // audio or fires a single result: the mic looks like it's listening
+  // (its own CSS animation has no idea anything's wrong) but nothing is
+  // ever actually heard. If she's still talking, listening just starts
+  // while she keeps going rather than cutting her off -- a session this
+  // short practically never has her still mid-sentence by the time
+  // someone's ready to reply anyway.
 
   el("type-row").classList.add("hidden");
   transcriptEl.textContent = "";
