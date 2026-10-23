@@ -27,7 +27,7 @@
     <h1 id="welcome-title" class="screen-title">Welcome!</h1>
     <p class="say-text" id="welcome-sub"></p>
     <label class="say-text" for="setup-name">Your name</label>
-    <input id="setup-name" type="text" autocomplete="off" />
+    <input id="setup-name" type="text" placeholder="e.g. Shalyn" autocomplete="off" />
     <label class="say-text" for="setup-relationship">Your relationship</label>
     <select id="setup-relationship">
       <option value="">Choose one…</option>
@@ -40,7 +40,8 @@
     </select>
     <input id="setup-relationship-other" type="text" placeholder="Relationship" class="hidden" autocomplete="off" />
     <label class="say-text" id="setup-nickname-label" for="setup-nickname">What do you call them?</label>
-    <input id="setup-nickname" type="text" autocomplete="off" />
+    <input id="setup-nickname" type="text" placeholder="e.g. Granny, Mom, Grandma" autocomplete="off" />
+    <p class="say-text" id="setup-nickname-hint">This is just for how we talk to you -- they'll always see your own name.</p>
     <label class="say-text" for="setup-email">Email (optional)</label>
     <input id="setup-email" type="email" autocomplete="off" />
     <label class="say-text checkbox-row">
@@ -66,8 +67,9 @@
 
   <div id="edit" class="cheer-card hidden">
     <h1 class="screen-title">Edit your details</h1>
-    <label class="say-text" for="edit-nickname">What do you call them?</label>
-    <input id="edit-nickname" type="text" autocomplete="off" />
+    <label class="say-text" id="edit-nickname-label" for="edit-nickname">What do you call them?</label>
+    <input id="edit-nickname" type="text" placeholder="e.g. Granny, Mom, Grandma" autocomplete="off" />
+    <p class="say-text">This is just for how we talk to you -- they'll always see your own name.</p>
     <label class="say-text" for="edit-email">Email (optional)</label>
     <input id="edit-email" type="email" autocomplete="off" />
     <label class="say-text checkbox-row">

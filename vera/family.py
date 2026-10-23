@@ -30,10 +30,24 @@ def new_id() -> str:
 def display_name(member: dict | None, user_first_name: str) -> str:
     """What this person calls the Vera user -- the family member's own
     answer once they've set it, falling back to the adder's guess, then
-    the user's first name."""
+    the user's first name. For wording addressed TO the family member
+    (an email/SMS nudge, the record page's own copy) only -- never for
+    identifying who a cheer is from; that's sender_name."""
     if not member:
         return user_first_name
     return member.get("nickname") or user_first_name
+
+
+def sender_name(member: dict | None, fallback: str) -> str:
+    """The family member's own name -- what the Vera user sees as a
+    cheer's sender ("A message from Shalyn"), always, regardless of
+    whatever nickname Shalyn privately calls the user by. Never confuse
+    this with display_name above; mixing the two up is exactly the bug
+    where a cheer showed as being from "Granny" (what Shalyn calls Rose)
+    instead of "Shalyn" (who actually sent it)."""
+    if not member:
+        return fallback
+    return member.get("name") or fallback
 
 
 def cheer_s3_key(filename: str) -> str:

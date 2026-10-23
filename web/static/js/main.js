@@ -252,6 +252,20 @@ async function tryPlayNextCheer({ onAppOpen = false } = {}) {
   return true;
 }
 
+// A cheer recorded for a specific occasion (before a guided session
+// starts, a self-timed activity starts, or right after finishing a game)
+// arrives already marked played by the tool that fired it (start_meditation,
+// start_stretch_routine, start_timed_activity, plan_activity, or a game's
+// submit_* call) -- this just plays it, no separate mark_cheer_played
+// needed. Called before that screen's own content so it plays first, per
+// its occasion (e.g. "right before a meditation starts, then the
+// meditation begins").
+async function playOccasionCheer(cheer) {
+  if (!cheer) return;
+  await say("Someone has a message for you!");
+  await showCheerOverlay(cheer);
+}
+
 // ---------- simulated living room display ----------
 // A SIMULATED Fire TV (see web/static/tv/display.html) -- handing a
 // session off to it just means mirroring a small snapshot of what's
@@ -517,6 +531,12 @@ async function handleBedrockToolCalls(toolCalls) {
         if (call.result.error) break;
         if (!inChat) showScreen("progress");
         await celebrate(call.result.new_milestones);
+        break;
+      case "plan_activity":
+        // Telling Vera she's heading out is the "before a walk or ride"
+        // occasion's other trigger, same as actually starting the app's
+        // own timer for it.
+        await playOccasionCheer(call.result.cheer);
         break;
       case "log_chat_game":
         // Nova's own spoken reply already says what was logged -- this
@@ -948,6 +968,7 @@ async function renderChatMemoryGame(data) {
 async function renderChatMemoryResult(result) {
   appendChatMessage("vera", `You remembered ${result.score} of ${result.total} words.`);
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
   setChatGameActive(false);
 }
@@ -1026,6 +1047,7 @@ async function finishChatMatchingGame() {
   }
   appendChatMessage("vera", `Found all ${result.pairs} pairs in ${s.attempts} tries!`);
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
   setChatGameActive(false);
 }
@@ -1057,6 +1079,7 @@ async function renderChatSayingResult(result) {
   }
   appendChatMessage("vera", `You got ${result.score} of ${result.total} right!`);
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
   setChatGameActive(false);
 }
@@ -1096,6 +1119,7 @@ async function renderChatCategoryResult(result) {
     appendChatMessage("vera", "No matches that time -- let's try again sometime!");
   }
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
   setChatGameActive(false);
 }
@@ -1196,6 +1220,7 @@ async function renderMemoryResult(result) {
   el("memory-result").classList.remove("hidden");
   el("memory-again-btn").classList.remove("hidden");
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
 }
 
@@ -1284,6 +1309,7 @@ async function finishMatchingGame() {
   el("matching-result").classList.remove("hidden");
   el("matching-again-btn").classList.remove("hidden");
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
 }
 
@@ -1348,6 +1374,7 @@ async function renderSayingResult(result) {
   el("saying-result").classList.remove("hidden");
   el("saying-again-btn").classList.remove("hidden");
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
 }
 
@@ -1401,6 +1428,7 @@ async function renderCategoryResult(result) {
   el("category-result").classList.remove("hidden");
   el("category-again-btn").classList.remove("hidden");
   await say(result.say);
+  await playOccasionCheer(result.cheer);
   await celebrate(result.new_milestones);
 }
 
@@ -1499,6 +1527,8 @@ async function startStretch(preloaded, routineId = "morning_chair_stretch") {
   }
   el("stretch-title").textContent = data.title || "Chair Stretch";
   renderStretchVideo(data);
+  await playOccasionCheer(data.cheer);
+  if (current !== "stretch") return;
   await say(data.say);
   Companion.setVideoMode(true);
   for (const [stepIndex, step] of data.steps.entries()) {
@@ -1742,6 +1772,8 @@ async function startMeditation(meditationId, preloaded) {
     }
   }
   el("meditation-text").textContent = data.title;
+  await playOccasionCheer(data.cheer);
+  if (current !== "meditation") return;
   await say(data.say);
   if (current !== "meditation") return;
 
@@ -1798,13 +1830,24 @@ async function finishLogActivity(feeling) {
 let timedActivityKind = null;
 let timedActivityElapsed = 0;
 
-function startTimedActivity(kind, label) {
+async function startTimedActivity(kind, label) {
   timedActivityKind = kind;
   timedActivityElapsed = 0;
   el("timed-activity-title").textContent = label;
   el("timed-activity-result").classList.add("hidden");
   el("timed-activity-circle").textContent = "0:00";
   showScreen("timed-activity");
+
+  // A family cheer recorded "before a walk or ride" plays right now, as
+  // she's heading out -- same moment as telling Vera about it in chat
+  // (plan_activity).
+  try {
+    const started = await callTool("start_timed_activity", { activity: kind, user_id: currentUserId });
+    await playOccasionCheer(started.cheer);
+  } catch {
+    // not fatal -- the timer still works fine without this
+  }
+  if (current !== "timed-activity") return;
 
   const renderClock = () => {
     const m = Math.floor(timedActivityElapsed / 60);

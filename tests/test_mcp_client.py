@@ -267,7 +267,7 @@ def test_family_cheers_flow(tmp_path):
             assert isinstance(upcoming["upcoming"], list)
 
             prompts = _data(await s.call_tool("get_cheer_prompts", {}))
-            assert len(prompts["anytime"]) == 3
+            assert len(prompts["anytime"]) == 2
 
             # Rejected: over the 15 second cap.
             too_long = _data(await s.call_tool("add_cheer", {
@@ -282,7 +282,9 @@ def test_family_cheers_flow(tmp_path):
                 "duration_seconds": 10, "cheer_type": "milestone", "target": "memory_perfect",
             }))["cheer"]
             assert milestone_cheer["status"] == "unlocked"
-            assert milestone_cheer["family_name"] == "Nana"
+            # The sender's own name, not "Nana" -- what Jake calls Rose,
+            # set via nickname above -- which is the exact bug this fixes.
+            assert milestone_cheer["family_name"] == "Jake"
 
             # Anytime cheer -- always starts locked, unlocks on the next
             # completed activity after it was recorded.

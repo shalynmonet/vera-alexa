@@ -81,20 +81,96 @@ def _log(user: dict, activity_type: str, minutes: float, day: date, details: dic
 
 def _unlock_cheers(user: dict, newly_earned_ids: set[str], logged_activity_type: str) -> None:
     """A milestone cheer unlocks the moment its milestone is earned; an
-    activity cheer unlocks the moment that activity type is next logged;
-    an anytime cheer unlocks on the person's next completed activity after
-    it was recorded (any type) -- so a cheer always arrives after some
-    real moment of effort, never the instant it's dropped in the box."""
+    anytime cheer unlocks on the person's next completed activity after it
+    was recorded (any type) -- so it always arrives after some real moment
+    of effort, never the instant it's dropped in the box. Every other
+    occasion (before_session, before_activity, after_game) only ever
+    unlocks -- and is immediately played -- at its own specific moment;
+    see _fire_occasion_cheer, called from that moment's own tool rather
+    than this generic per-activity-log sweep."""
     earned_ids = {m["id"] for m in user["milestones"]} | newly_earned_ids
     for c in user.get("cheers", []):
         if c["status"] != "locked":
             continue
         if c["cheer_type"] == "milestone" and c["target"] in earned_ids:
             c["status"] = "unlocked"
-        elif c["cheer_type"] == "activity" and c["target"] == logged_activity_type:
-            c["status"] = "unlocked"
         elif c["cheer_type"] == "anytime" and len(user["activities"]) > c.get("activities_at_recording", 0):
             c["status"] = "unlocked"
+
+
+# Occasion kinds a cheer can be recorded for, and when each one fires --
+# see _fire_occasion_cheer and get_cheer_prompts just below. "milestone"
+# and "anytime" are handled separately above/in next_cheer: a milestone
+# unlocks the moment it's earned, and an anytime cheer unlocks on the
+# person's next completed activity and is free to surface on any later
+# app-open/step-break pickup. The three below never do that -- each only
+# ever unlocks (and is immediately played) at its own exact moment.
+_SESSION_TARGETS = {"stretch", "meditation"}  # before_session targets
+
+
+def _migrate_legacy_cheer_occasions(user: dict) -> bool:
+    """Self-heals two historical bugs in already-recorded cheers, the
+    first time they're read back after this fix lands:
+
+    1. cheer_type "activity" (retired) unlocked the instant that activity
+       type was ever logged -- including, for a demo profile seeded with
+       weeks of history, activity types it already contained, so a cheer
+       like "Enjoy your meditation" could start (or become) unlocked and
+       play on the very next app open, as if it were anytime. Reclassified
+       to before_session/before_activity and re-locked unless it already
+       played, so it only fires at its own moment from here on.
+    2. A cheer's family_name snapshot could be the sender's nickname
+       (what they call this person) instead of their own name -- see
+       vera/family.py's sender_name vs display_name.
+
+    Returns True if anything changed, so callers only re-save when
+    something actually needed fixing."""
+    changed = False
+    by_id = {m["id"]: m for m in user.get("family", [])}
+    for c in user.get("cheers", []):
+        if c.get("cheer_type") == "activity":
+            c["cheer_type"] = "before_session" if c.get("target") in _SESSION_TARGETS else "before_activity"
+            if c["status"] == "unlocked":
+                c["status"] = "locked"
+            changed = True
+        member = by_id.get(c.get("family_id"))
+        if member:
+            correct = family.sender_name(member, c.get("family_name", ""))
+            if c.get("family_name") != correct:
+                c["family_name"] = correct
+                changed = True
+    return changed
+
+
+def _played_today_count(user: dict, day: date) -> int:
+    return sum(1 for c in user.get("cheers", []) if c["status"] == "played" and c.get("played_on") == day.isoformat())
+
+
+def _fire_occasion_cheer(user: dict, day: date, cheer_type: str, target: str | None) -> dict | None:
+    """Finds a locked cheer recorded for this exact occasion -- cheer_type
+    plus either a matching target or one recorded as a wildcard (no
+    specific target given, e.g. a "record my own" cheer for "before a walk
+    or ride" generally) -- and, if today's cheer cap still allows one more,
+    unlocks it and immediately marks it played, returning it ready to play
+    right at this moment (oldest recorded first). If the cap's already
+    reached, the cheer is left locked entirely instead of leaking into the
+    generic next_cheer rotation or a later app-open pickup -- it gets
+    another chance the next time this same occasion comes around."""
+    if _played_today_count(user, day) >= MAX_CHEERS_PER_DAY:
+        return None
+    candidates = sorted(
+        (c for c in user.get("cheers", []) if c["status"] == "locked" and c["cheer_type"] == cheer_type
+         and (c["target"] is None or c["target"] == target)),
+        key=lambda c: c["recorded_on"],
+    )
+    if not candidates:
+        return None
+    cheer = candidates[0]
+    cheer["status"] = "played"
+    cheer["played_on"] = day.isoformat()
+    cheer["url"] = family.cheer_media_url(cheer)
+    cheer["photo_url"] = family.cheer_photo_url(cheer)
+    return cheer
 
 
 def _slugify_activity(name: str) -> str:
@@ -233,8 +309,9 @@ def submit_memory_answer(answer: str, user_id: str = "demo", on_date: str | None
     if response_seconds is not None:
         details["response_seconds"] = response_seconds
     new = _log(u, "memory_game", 2, _today(on_date), details)
+    cheer = _fire_occasion_cheer(u, _today(on_date), "after_game", None)
     store.save_user(u)
-    return {**result, "next_difficulty": nxt, "say": memory_game.encouragement(result), "new_milestones": new}
+    return {**result, "next_difficulty": nxt, "say": memory_game.encouragement(result), "new_milestones": new, "cheer": cheer}
 
 
 # ---------- Matching pairs ----------
@@ -273,9 +350,10 @@ def submit_matching_result(attempts: int, user_id: str = "demo", on_date: str | 
     if response_seconds is not None:
         details["response_seconds"] = response_seconds
     new = _log(u, "matching_game", 3, _today(on_date), details)
+    cheer = _fire_occasion_cheer(u, _today(on_date), "after_game", None)
     store.save_user(u)
     say = "Every pair found with no wasted flips. Sharp eyes today!" if perfect else f"Well done, you found all {pairs} pairs!"
-    return {"pairs": pairs, "attempts": attempts, "perfect": perfect, "next_difficulty": nxt, "say": say, "new_milestones": new}
+    return {"pairs": pairs, "attempts": attempts, "perfect": perfect, "next_difficulty": nxt, "say": say, "new_milestones": new, "cheer": cheer}
 
 
 # ---------- Finish the saying ----------
@@ -338,12 +416,13 @@ def submit_saying_answer(choice: str, user_id: str = "demo", on_date: str | None
         details["response_seconds"] = state["response_seconds_total"] / state["response_count"]
     u["saying"] = {"next_difficulty": nxt}
     new = _log(u, "saying_game", 2, _today(on_date), details)
+    cheer = _fire_occasion_cheer(u, _today(on_date), "after_game", None)
     store.save_user(u)
     say = f"All {total} correct! Your memory for sayings is sharp." if perfect else f"You got {score} of {total}. Nice work."
     return {
         "correct": correct, "answer": item["correct"], "done": True,
         "score": score, "total": total, "perfect": perfect,
-        "next_difficulty": nxt, "say": say, "new_milestones": new,
+        "next_difficulty": nxt, "say": say, "new_milestones": new, "cheer": cheer,
     }
 
 
@@ -432,11 +511,12 @@ def submit_category_answer(answer: str, user_id: str = "demo", on_date: str | No
     if response_seconds is not None:
         details["response_seconds"] = response_seconds
     new = _log(u, "category_game", 2, _today(on_date), details)
+    cheer = _fire_occasion_cheer(u, _today(on_date), "after_game", None)
     store.save_user(u)
     say = _category_say(category, count, target, result["unmatched"])
     return {
         **result, "category": category, "target": target, "perfect": perfect,
-        "beyond_goal": beyond_goal, "next_difficulty": nxt, "say": say, "new_milestones": new,
+        "beyond_goal": beyond_goal, "next_difficulty": nxt, "say": say, "new_milestones": new, "cheer": cheer,
     }
 
 
@@ -465,23 +545,36 @@ def start_stretch_routine(routine_id: str = "morning_chair_stretch", user_id: st
     """Start a guided, fully seated or standing exercise routine (chair
     stretch, seated strength, balance, or gentle walking). Returns the real
     video if it's been recorded yet, and the step by step narration Vera
-    speaks while it plays either way (including a halfway check in)."""
+    speaks while it plays either way (including a halfway check in). If a
+    family cheer was recorded "before a stretch", this is also the moment
+    it plays (returned as "cheer") -- right before the routine's own
+    narration starts, per the daily cap."""
     r = media.exercise_routine(routine_id)
     if not r:
         return {"error": f"Unknown routine. Options: {[x['id'] for x in media.exercise_routines()]}"}
-    name = store.get_user(user_id)["name"]
-    return {**r, "routine_id": routine_id, "say": f"Alright {name}, let's do {r['title'].lower()} together."}
+    u = store.get_user(user_id)
+    cheer = _fire_occasion_cheer(u, date.today(), "before_session", "stretch")
+    if cheer:
+        store.save_user(u)
+    return {**r, "routine_id": routine_id, "say": f"Alright {u['name']}, let's do {r['title'].lower()} together.", "cheer": cheer}
 
 
 @mcp.tool()
 def start_meditation(meditation_id: str = "healing_affirmations", user_id: str = "demo") -> dict:
     """Start a guided meditation. Call list_sessions first to see what's
     available. Returns the real audio or video if it's been recorded, or an
-    intro line and a target length otherwise."""
+    intro line and a target length otherwise. If a family cheer was
+    recorded "before a meditation", this is also the moment it plays
+    (returned as "cheer") -- right before the meditation itself begins,
+    per the daily cap."""
     m = media.meditation(meditation_id)
     if not m:
         return {"error": f"Unknown meditation. Options: {[x['id'] for x in media.meditations()]}"}
-    return {**m, "meditation_id": meditation_id, "say": m["intro"]}
+    u = store.get_user(user_id)
+    cheer = _fire_occasion_cheer(u, date.today(), "before_session", "meditation")
+    if cheer:
+        store.save_user(u)
+    return {**m, "meditation_id": meditation_id, "say": m["intro"], "cheer": cheer}
 
 
 def _clear_matching_plan(user: dict, activity_key: str, day_iso: str) -> None:
@@ -520,6 +613,22 @@ def log_completion(activity_type: str, minutes: float, completed: bool, user_sta
     if new:
         say += " " + " ".join(m["celebration"] for m in new)
     return {"logged": True, "streak": s, "new_milestones": new, "say": say}
+
+
+@mcp.tool()
+def start_timed_activity(activity: str, user_id: str = "demo") -> dict:
+    """Call this the moment the person actually starts a self-timed
+    activity (the app's own "Start a Walk"/"Start a Ride" timer) -- not
+    when it finishes, that's still log_activity. Its only job is firing a
+    family cheer recorded "before a walk or ride" for this activity type,
+    if one's waiting and today's cheer cap allows it (returned as
+    "cheer"), so it plays right as she's heading out rather than whenever
+    it happens to be picked up later."""
+    u = store.get_user(user_id)
+    cheer = _fire_occasion_cheer(u, date.today(), "before_activity", _slugify_activity(activity))
+    if cheer:
+        store.save_user(u)
+    return {"cheer": cheer}
 
 
 @mcp.tool()
@@ -583,7 +692,11 @@ def plan_activity(activity: str, user_id: str = "demo", when: str | None = None,
     Vera will ask about it on the next proactive greeting or later the
     same day ('Did you get your walk in today?') instead of logging it
     now. Never used to shame a plan that didn't happen -- it just quietly
-    stops being brought up once the day ends."""
+    stops being brought up once the day ends. Also fires a family cheer
+    recorded "before a walk or ride" for this activity type, if one's
+    waiting and today's cheer cap allows it (returned as "cheer") -- this
+    is the "tells Vera she's heading out" trigger for that occasion, same
+    as actually starting the app's own timer for it."""
     activity_key = _slugify_activity(activity)
     u = store.get_user(user_id)
     day_iso = _today(on_date).isoformat()
@@ -598,8 +711,9 @@ def plan_activity(activity: str, user_id: str = "demo", when: str | None = None,
         "planned_on": day_iso,
     }
     u["planned_activities"].append(plan)
+    cheer = _fire_occasion_cheer(u, _today(on_date), "before_activity", activity_key)
     store.save_user(u)
-    return {"plan": plan}
+    return {"plan": plan, "cheer": cheer}
 
 
 @mcp.tool()
@@ -843,27 +957,36 @@ def upcoming_milestones(user_id: str = "demo", on_date: str | None = None) -> di
 _ANYTIME_SCRIPTS = [
     "Keep going, I'm so proud of you.",
     "Hope you're having a beautiful day.",
-    "Way to go playing all the games today!",
 ]
-_ACTIVITY_SCRIPTS = {
+_GAME_SCRIPT = "Way to go playing all the games today!"
+# Guided sessions: the cheer plays right as the session starts, then the
+# session itself begins (cheer_type "before_session").
+_SESSION_SCRIPTS = {
+    "stretch": "Enjoy your stretching!",
+    "meditation": "Enjoy your meditation, {called}.",
+}
+# Self-logged activities: the cheer plays the moment she starts a timed
+# session for one, or tells Vera she's about to (cheer_type
+# "before_activity").
+_SIMPLE_ACTIVITY_SCRIPTS = {
     "walk": "I hope you have a nice walk!",
     "bike": "I hope you have a nice bike ride!",
     "stationary_bike": "Enjoy your ride!",
     "gardening": "Have fun out in the garden!",
     "dancing": "Dance like nobody's watching!",
     "swimming": "Enjoy your swim!",
-    "stretch": "Enjoy your stretching!",
-    "meditation": "Enjoy your meditation, {called}.",
 }
+_GAME_TYPES = {"memory_game", "matching_game", "saying_game", "category_game"}
 
 
 @mcp.tool()
 def get_cheer_prompts(user_id: str = "demo", on_date: str | None = None) -> dict:
     """Ready-made cheer scripts for the family link page: one per milestone
-    the person is close to ('coming_up', tagged to that milestone), three
-    fixed 'anytime' lines, and one per activity type they actually do
-    ('activity', tagged to that activity type) -- generated from their
-    real data so every suggestion is genuinely relevant."""
+    the person is close to ('coming_up', tagged to that milestone), two
+    fixed 'anytime' lines, and one per activity (including a session like
+    meditation, or any of the four games) they actually do ('activity',
+    tagged with the occasion it'll actually play at) -- generated from
+    their real data so every suggestion is genuinely relevant."""
     u = store.get_user(user_id)
     day = _today(on_date)
     called = u["name"].split()[0]
@@ -874,45 +997,68 @@ def get_cheer_prompts(user_id: str = "demo", on_date: str | None = None) -> dict
     ]
     anytime = [{"cheer_type": "anytime", "target": None, "script": s} for s in _ANYTIME_SCRIPTS]
     counts = Counter(a["type"] for a in u["activities"])
-    activity = [
-        {"cheer_type": "activity", "target": t, "script": _ACTIVITY_SCRIPTS.get(t, f"Enjoy your {t.replace('_', ' ')}, {called}!").format(called=called)}
-        for t, _ in counts.most_common(3)
-        if t not in {"memory_game", "matching_game", "saying_game", "category_game"}
-    ]
+    activity = []
+    if any(t in _GAME_TYPES for t in counts):
+        activity.append({"cheer_type": "after_game", "target": None, "script": _GAME_SCRIPT})
+    for t, _ in counts.most_common(5):
+        if t in _GAME_TYPES:
+            continue
+        if t in _SESSION_TARGETS:
+            activity.append({"cheer_type": "before_session", "target": t, "script": _SESSION_SCRIPTS[t].format(called=called)})
+        else:
+            script = _SIMPLE_ACTIVITY_SCRIPTS.get(t, f"Enjoy your {t.replace('_', ' ')}, {called}!")
+            activity.append({"cheer_type": "before_activity", "target": t, "script": script.format(called=called)})
+        if len(activity) >= 4:  # the game slot (if any) plus up to 3 activities
+            break
     return {"coming_up": coming_up, "anytime": anytime, "activity": activity}
 
 
 def _initial_cheer_status(user: dict, cheer_type: str, target: str | None) -> str:
     if cheer_type == "milestone":
         return "unlocked" if target in {m["id"] for m in user["milestones"]} else "locked"
-    if cheer_type == "activity":
-        return "unlocked" if any(a["type"] == target for a in user["activities"]) else "locked"
-    return "locked"  # anytime: unlocks on the person's next completed activity
+    # before_session / before_activity / after_game / anytime: every one
+    # of these only ever unlocks at its own specific moment (see
+    # _fire_occasion_cheer and _unlock_cheers) -- never just because a
+    # matching activity already happened to be in the person's history,
+    # which is what let a freshly-recorded "Enjoy your meditation" cheer
+    # start already unlocked (and play on the very next app open) for a
+    # demo profile seeded with weeks of meditation history.
+    return "locked"
+
+
+_OCCASION_TYPES = ("milestone", "before_session", "before_activity", "after_game", "anytime")
 
 
 @mcp.tool()
 def add_cheer(family_id: str, media_type: str, file: str, duration_seconds: float, user_id: str = "demo",
               cheer_type: str = "anytime", target: str | None = None, photo_file: str | None = None,
               storage: str = "local", on_date: str | None = None) -> dict:
-    """Register a cheer that's already been uploaded. cheer_type is
-    'milestone' (target is a milestone id), 'activity' (target is an
-    activity type), or 'anytime' (no target). file is the saved filename
-    (local) or S3 object key (storage='s3'); photo_file likewise for a
-    'voice + photo' cheer's picture. Rejects anything over 15 seconds.
-    Starts locked unless its condition is already true (the milestone's
-    already earned, or this is an activity cheer for something already
-    logged) -- otherwise it unlocks the moment that happens."""
+    """Register a cheer that's already been uploaded. cheer_type is the
+    occasion it should play at: 'milestone' (target is a milestone id,
+    plays the moment it's earned), 'before_session' (target is 'stretch'
+    or 'meditation', plays right as that session starts), 'before_activity'
+    (target is a self-logged activity type like 'walk', plays when she
+    starts a timer for it or tells Vera she's about to -- target can be
+    omitted for "whichever she starts first"), 'after_game' (no target,
+    plays right after she finishes any of the four games), or 'anytime'
+    (no target, plays after her next completed activity of any kind).
+    file is the saved filename (local) or S3 object key (storage='s3');
+    photo_file likewise for a 'voice + photo' cheer's picture. Rejects
+    anything over 15 seconds. Starts locked unless a milestone target is
+    already earned -- every other occasion only ever unlocks (and plays)
+    at its own specific moment, never just because that moment already
+    happened sometime in the past."""
     if duration_seconds > family.MAX_CHEER_SECONDS + 1:  # +1s grace for encoder/clock rounding
         return {"error": f"Cheers are {family.MAX_CHEER_SECONDS} seconds max."}
-    if cheer_type not in ("milestone", "activity", "anytime"):
-        return {"error": "cheer_type must be 'milestone', 'activity', or 'anytime'."}
+    if cheer_type not in _OCCASION_TYPES:
+        return {"error": f"cheer_type must be one of: {', '.join(_OCCASION_TYPES)}."}
     u = store.get_user(user_id)
     members = u.get("family", [])
     member = next((m for m in members if m["id"] == family_id), None)
     cheer = {
         "id": family.new_id(),
         "family_id": family_id,
-        "family_name": family.display_name(member, u["name"].split()[0]),
+        "family_name": family.sender_name(member, u["name"].split()[0]),
         "cheer_type": cheer_type,
         "target": target,
         "media_type": media_type,
@@ -945,6 +1091,8 @@ def list_cheers(user_id: str = "demo", status: str | None = None, cheer_type: st
     Each cheer includes a fresh playback url (and photo_url, if any) when
     stored in S3."""
     u = store.get_user(user_id)
+    if _migrate_legacy_cheer_occasions(u):
+        store.save_user(u)
     cheers = u.get("cheers", [])
     if status is not None:
         cheers = [c for c in cheers if c["status"] == status]
@@ -965,14 +1113,22 @@ def next_cheer(user_id: str = "demo", on_date: str | None = None) -> dict:
     """The next unlocked cheer due to actually play -- for a milestone
     moment, a workout's step-break pause, or the home shelf -- respecting
     the daily cap (VERA_MAX_CHEERS_PER_DAY, default 2) and rotating across
-    family members so one person's cheers don't all play in a row. Returns
-    {"cheer": null} if nothing's due right now."""
+    family members so one person's cheers don't all play in a row. Only
+    ever offers a milestone or anytime cheer here -- every other occasion
+    (before_session, before_activity, after_game) plays via its own moment
+    instead (see _fire_occasion_cheer), never a generic pickup like this
+    one. Returns {"cheer": null} if nothing's due right now."""
     u = store.get_user(user_id)
+    if _migrate_legacy_cheer_occasions(u):
+        store.save_user(u)
     day = _today(on_date)
     played_today = [c for c in u.get("cheers", []) if c["status"] == "played" and c.get("played_on") == day.isoformat()]
-    if len(played_today) >= MAX_CHEERS_PER_DAY:
+    if _played_today_count(u, day) >= MAX_CHEERS_PER_DAY:
         return {"cheer": None}
-    unlocked = sorted((c for c in u.get("cheers", []) if c["status"] == "unlocked"), key=lambda c: c["recorded_on"])
+    unlocked = sorted(
+        (c for c in u.get("cheers", []) if c["status"] == "unlocked" and c["cheer_type"] in ("milestone", "anytime")),
+        key=lambda c: c["recorded_on"],
+    )
     if not unlocked:
         return {"cheer": None}
     last_family_id = played_today[-1]["family_id"] if played_today else None
@@ -1062,6 +1218,8 @@ def export_demo_snapshot(user_id: str = "demo") -> dict:
     web/app.py's /api/demo/save_baseline, which is the only caller and is
     itself gated behind the real access code."""
     u = store.get_user(user_id)
+    if _migrate_legacy_cheer_occasions(u):
+        store.save_user(u)
     today = date.today()
 
     def days_ago(iso: str) -> int:

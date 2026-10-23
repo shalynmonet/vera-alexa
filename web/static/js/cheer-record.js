@@ -144,6 +144,7 @@ async function saveWelcome() {
 // ---------- edit details ----------
 
 function showEdit() {
+  el("edit-nickname-label").textContent = `What do you call ${recipientFirst}?`;
   el("edit-nickname").value = ctx.member.nickname || "";
   el("edit-email").value = ctx.member.email || "";
   el("edit-email-optin").checked = !!ctx.member.email_opt_in;
@@ -195,10 +196,18 @@ function showMain() {
 
 // ---------- recorder ----------
 
+// Fixed occasions, matching exactly what the server knows how to fire a
+// cheer for (see server.py's _fire_occasion_cheer) -- a generic "before a
+// walk or ride" / "before a meditation" is recorded with no specific
+// target, so it fires for whichever one actually happens first.
 function whenOptions() {
-  const opts = [`<option value="anytime">Anytime</option>`];
+  const opts = [
+    `<option value="anytime">Anytime</option>`,
+    `<option value="before_session:meditation">Before a meditation</option>`,
+    `<option value="before_activity">Before a walk or ride</option>`,
+    `<option value="after_game">After a game</option>`,
+  ];
   ctx.prompts.coming_up.forEach((p) => opts.push(`<option value="milestone:${escapeHtml(p.target)}">When they reach: ${escapeHtml(p.script.replace(/^Congrats on your /i, "").replace(/!$/, ""))}</option>`));
-  ctx.prompts.activity.forEach((p) => opts.push(`<option value="activity:${escapeHtml(p.target)}">After their next ${escapeHtml(p.target.replace(/_/g, " "))}</option>`));
   return opts.join("");
 }
 
@@ -445,7 +454,12 @@ async function sendCheer() {
     target = pendingCheer.target;
   } else {
     const when = el("when-select").value;
+    // "milestone:streak_7" / "before_session:meditation" carry a specific
+    // target; "anytime" / "before_activity" / "after_game" don't (the
+    // latter two are then a wildcard -- fires for whichever one happens
+    // first; see whenOptions above).
     if (when.includes(":")) [cheerType, target] = when.split(":");
+    else cheerType = when;
   }
 
   const form = new FormData();
