@@ -91,9 +91,16 @@ export const SILENCE_MS = 3000;
 // behavior, but not perfect.
 //
 // Returns a controller: { promise, stop, cancel, cancelled }.
-//   promise  resolves with the final transcript (a trimmed, non-empty
-//            string), or null if nothing was said, recognition isn't
-//            supported, or cancel() was called.
+//   promise  resolves with the best transcript captured (a trimmed,
+//            non-empty string): finalTranscript if the recognizer ever
+//            actually marked anything isFinal, otherwise the last text
+//            that was shown as the live interim transcript -- iOS
+//            Safari's webkitSpeechRecognition in continuous mode often
+//            never sets isFinal at all, so insisting on a final result
+//            there means losing speech the person watched appear
+//            correctly on screen. Resolves null only if nothing was ever
+//            displayed, recognition isn't supported, or cancel() was
+//            called.
 //   stop()   finalizes now, resolving with whatever was captured so far
 //            (the "I'm done talking" button).
 //   cancel() discards everything and resolves with null (tap-the-mic-again).
@@ -110,6 +117,12 @@ export function startListening({ onInterim, silenceMs = SILENCE_MS } = {}) {
   }
 
   let finalTranscript = "";
+  // The fullest text actually shown on screen so far -- survives a
+  // Chrome-style session restart (these live in startListening's own
+  // closure, not startSession's, so an onend-triggered restart below
+  // never resets them) and is the fallback resolve value when
+  // finalTranscript never got anything (the iOS case this fixes).
+  let lastDisplayedText = "";
   let silenceTimer = null;
   let finished = false;
   let rec = null;
@@ -129,7 +142,7 @@ export function startListening({ onInterim, silenceMs = SILENCE_MS } = {}) {
       rec.onend = null; // this was a deliberate stop -- don't auto-restart
       try { rec.stop(); } catch { /* already stopped */ }
     }
-    const text = finalTranscript.trim();
+    const text = finalTranscript.trim() || lastDisplayedText.trim();
     resolvePromise(controller.cancelled ? null : (text || null));
   }
 
@@ -141,13 +154,22 @@ export function startListening({ onInterim, silenceMs = SILENCE_MS } = {}) {
     rec.maxAlternatives = 1;
 
     rec.onresult = (e) => {
-      let interim = "";
+      let finalPiece = "";
+      // Not +=: iOS reissues results cumulatively (each new one repeats
+      // the words from the last, with whatever's newly been heard tacked
+      // on), so concatenating every non-final result in range would
+      // double up the same words over and over. Only the latest one in
+      // this batch is ever the full-so-far interim text, final or not.
+      let latestInterim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const transcript = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalTranscript += `${transcript} `;
-        else interim += transcript;
+        if (e.results[i].isFinal) finalPiece += `${transcript} `;
+        else latestInterim = transcript;
       }
-      onInterim?.((finalTranscript + interim).trim());
+      if (finalPiece) finalTranscript += finalPiece;
+      const displayed = (finalTranscript + latestInterim).trim();
+      if (displayed) lastDisplayedText = displayed;
+      onInterim?.(displayed);
       resetSilenceTimer();
     };
     rec.onerror = (e) => {

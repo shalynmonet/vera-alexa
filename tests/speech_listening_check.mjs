@@ -151,4 +151,71 @@ const latestRec = () => FakeRecognition.instances.at(-1);
   window.SpeechRecognition = saved;
 }
 
+// iPhone Safari bug: webkitSpeechRecognition in continuous mode often never
+// marks anything isFinal, even though the live transcript the person
+// watched on screen was correct. Must still resolve with that text, not
+// "I didn't quite catch that" just because isFinal never fired.
+{
+  const interims = [];
+  const ctrl = startListening({ silenceMs: 50, onInterim: (t) => interims.push(t) });
+  const rec = latestRec();
+  rec.updateInterim("I went for a walk this morning");
+  await sleep(80);
+  const result = await ctrl.promise;
+  assert.equal(result, "I went for a walk this morning");
+  assert.deepEqual(interims, ["I went for a walk this morning"]);
+}
+
+// Also iPhone Safari: each new (still non-final) result repeats the words
+// from the last one with whatever's newly been heard tacked on, rather
+// than handing over just the new words -- concatenating them must not
+// double up the overlap.
+{
+  const ctrl = startListening({ silenceMs: 50 });
+  const rec = latestRec();
+  rec.updateInterim("I went");
+  rec.updateInterim("I went for a walk");
+  rec.updateInterim("I went for a walk this morning");
+  await sleep(80);
+  const result = await ctrl.promise;
+  assert.equal(result, "I went for a walk this morning");
+}
+
+// A never-final transcript survives a mid-utterance forced restart too
+// (Chrome's own session boundary, or iOS ending the session early) --
+// not just the already-covered finalize()-based accumulation case above.
+{
+  const ctrl = startListening({ silenceMs: 50 });
+  const rec = latestRec();
+  rec.updateInterim("hello there");
+  rec.triggerEnd();
+  assert.ok(rec.started, "recognition should auto-restart after the browser ends the session on its own");
+  rec.updateInterim("this is a new session");
+  await sleep(80);
+  const result = await ctrl.promise;
+  assert.equal(result, "this is a new session", "the never-final text from before the restart couldn't survive it (a real browser gives no way to recover it), but nothing from after it should be lost either");
+}
+
+// "I'm done talking" (stop()) must also fall back to the last-displayed
+// interim text when nothing was ever finalized -- not just the silence
+// timeout path exercised above.
+{
+  const ctrl = startListening({ silenceMs: 5000 });
+  const rec = latestRec();
+  rec.updateInterim("stopping before the silence timer");
+  ctrl.stop();
+  const result = await ctrl.promise;
+  assert.equal(result, "stopping before the silence timer");
+}
+
+// Nothing at all displayed (dead air, or recognition that never reported
+// anything) -- still resolves null so the caller's "I didn't quite catch
+// that" is reserved for when there's genuinely nothing to fall back to.
+{
+  const ctrl = startListening({ silenceMs: 50 });
+  await sleep(80);
+  const result = await ctrl.promise;
+  assert.equal(result, null);
+}
+
 console.log("speech listening: all checks passed");
