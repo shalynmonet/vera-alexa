@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import os
 import uuid
 from pathlib import Path
@@ -42,6 +43,28 @@ ALLOWED_MEDIA_TYPES = {"voice", "voice_photo", "video"}
 # this still blocks anything that isn't actually audio/video/image.
 ALLOWED_AV_PREFIXES = ("audio/", "video/")
 ALLOWED_IMAGE_PREFIXES = ("image/",)
+# A saved cheer's extension has to actually match its bytes -- cheer-media
+# is served by a plain StaticFiles mount, which sets Content-Type from the
+# filename's extension alone, not by sniffing the file. That's always been
+# fine for a live browser recording (always audio/webm or video/webm), but
+# "Upload a File Instead" can hand this a real WAV/MP3/M4A/MOV, so a few
+# common ones are mapped explicitly; mimetypes covers most of the rest, and
+# the old fixed webm/mp4 guess is the last-resort fallback.
+_EXTENSION_OVERRIDES = {
+    "audio/webm": "webm", "video/webm": "webm",
+    "audio/x-m4a": "m4a", "audio/m4a": "m4a", "audio/mp4": "m4a",
+}
+
+
+def _media_extension(content_type: str | None, media_type: str) -> str:
+    content_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if content_type in _EXTENSION_OVERRIDES:
+        return _EXTENSION_OVERRIDES[content_type]
+    guessed = mimetypes.guess_extension(content_type) if content_type else None
+    if guessed:
+        return guessed.lstrip(".")
+    return "mp4" if media_type == "video" else "webm"
+
 
 class NoCacheStaticFiles(StaticFiles):
     """Static files change constantly during development/demos; without an
@@ -238,6 +261,32 @@ async def api_cheer_context(token: str):
     }
 
 
+@app.post("/api/cheer/update_member/{token}")
+async def api_cheer_update_member(token: str, payload: dict):
+    """A family member editing their own first-visit setup or a later
+    detail (name, relationship, nickname, email, email opt-in) from their
+    private record-page link -- no login, the token is already their only
+    auth. Resolves the token to the right user_id/family_id itself rather
+    than trusting anything the client sends for those, which is what lets
+    this safely sit outside the access-code gate alongside the rest of the
+    /cheer/<token> flow."""
+    try:
+        resolved = await mcp_bridge.call_tool("resolve_family_token", {"token": token})
+    except mcp_bridge.ToolError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    if "error" in resolved:
+        raise HTTPException(status_code=404, detail=resolved["error"])
+    allowed_fields = {"name", "relationship", "nickname", "email", "email_opt_in"}
+    fields = {k: v for k, v in (payload or {}).items() if k in allowed_fields}
+    try:
+        result = await mcp_bridge.call_tool("update_family_member", {
+            "family_id": resolved["member"]["id"], "user_id": resolved["user_id"], **fields,
+        })
+    except mcp_bridge.ToolError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
 @app.post("/api/cheer/upload/{token}")
 async def api_cheer_upload(
     token: str,
@@ -274,7 +323,7 @@ async def api_cheer_upload(
     if photo_content and len(photo_content) > MAX_CHEER_BYTES:
         raise HTTPException(status_code=400, detail="That photo is too large.")
 
-    ext = "mp4" if media_type == "video" else "webm"
+    ext = _media_extension(file.content_type, media_type)
     filename = f"{uuid.uuid4().hex}.{ext}"
     photo_filename = f"{uuid.uuid4().hex}.jpg" if photo_content else None
 

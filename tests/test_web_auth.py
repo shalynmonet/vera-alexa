@@ -286,6 +286,76 @@ def test_rate_limiter_window_expires_old_hits():
     assert limiter.allow("device-a") is True
 
 
+# ---------- saved filename extension matches the real file type ----------
+# cheer_media is served by a plain StaticFiles mount, which sets
+# Content-Type from the filename's extension alone -- "Upload a File
+# Instead" can hand the server a real WAV/MP3/M4A, not just a MediaRecorder
+# webm/mp4 blob, so the saved extension has to actually match the bytes or
+# playback can break.
+
+def test_media_extension_prefers_known_overrides():
+    assert app_module._media_extension("audio/webm", "voice") == "webm"
+    assert app_module._media_extension("video/webm", "video") == "webm"
+    assert app_module._media_extension("audio/wav", "voice") == "wav"
+    assert app_module._media_extension("audio/mpeg", "voice") == "mp3"
+    assert app_module._media_extension("audio/x-m4a", "voice") == "m4a"
+
+
+def test_media_extension_falls_back_when_unknown():
+    assert app_module._media_extension(None, "voice") == "webm"
+    assert app_module._media_extension("audio/x-some-made-up-codec", "video") == "mp4"
+
+
+def test_cheer_upload_saves_an_uploaded_file_with_its_real_extension(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+    captured = {}
+
+    async def fake_call_tool(name, arguments=None):
+        if name == "resolve_family_token":
+            return {"user_id": "demo", "member": {"id": "fam1"}}
+        if name == "add_cheer":
+            captured["file"] = arguments["file"]
+            return {"cheer": {"id": "c1"}, "sent_count": 1, "goal": 5}
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post(
+        "/api/cheer/upload/some-token",
+        data={"media_type": "voice", "duration_seconds": "3"},
+        files={"file": ("my-recording.wav", b"RIFF....fake wav bytes", "audio/wav")},
+    )
+    assert res.status_code == 200
+    assert captured["file"].endswith(".wav")
+    assert (tmp_path / captured["file"]).exists()
+
+
+def test_cheer_upload_keeps_webm_for_a_live_browser_recording(monkeypatch, tmp_path):
+    """Also fixes a pre-existing mismatch: a live video recording is
+    really video/webm (MediaRecorder never produces mp4), but used to be
+    saved with a hardcoded .mp4 extension regardless."""
+    monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+    captured = {}
+
+    async def fake_call_tool(name, arguments=None):
+        if name == "resolve_family_token":
+            return {"user_id": "demo", "member": {"id": "fam1"}}
+        if name == "add_cheer":
+            captured["file"] = arguments["file"]
+            return {"cheer": {"id": "c1"}, "sent_count": 1, "goal": 5}
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post(
+        "/api/cheer/upload/some-token",
+        data={"media_type": "video", "duration_seconds": "5"},
+        files={"file": ("cheer.webm", b"fake video bytes", "video/webm")},
+    )
+    assert res.status_code == 200
+    assert captured["file"].endswith(".webm")
+
+
 # ---------- cheer upload validation ----------
 # No access code involved here -- /api/cheer/upload/<token> is exempt from
 # the gate (the token is its own auth) -- this is purely about not
@@ -336,5 +406,64 @@ def test_cheer_upload_accepts_a_real_audio_content_type(monkeypatch):
         "/api/cheer/upload/some-token",
         data={"media_type": "voice", "duration_seconds": "5"},
         files={"file": ("cheer.webm", b"fake audio bytes", "audio/webm")},
+    )
+    assert res.status_code == 200
+
+
+# ---------- cheer update_member: the bug where a family member's own
+# first-visit setup / later edit needed a login they could never have ----------
+
+def test_cheer_update_member_needs_no_cookie_even_with_access_code_set(code_enabled, monkeypatch):
+    """The actual bug: a family member visiting their /cheer/<token> link
+    has no login at all. update_member must work exactly like
+    /api/cheer/context and /api/cheer/upload already do -- reachable with
+    no cookie -- even once VERA_ACCESS_CODE is configured. Before the fix
+    this route didn't exist and the page called the cookie-gated generic
+    /api/tool/update_family_member instead, which 401'd for every family
+    member and showed "Link not found"."""
+    async def fake_call_tool(name, arguments=None):
+        if name == "resolve_family_token":
+            return {"user_id": "rose", "member": {"id": "fam1"}}
+        if name == "update_family_member":
+            assert arguments == {"user_id": "rose", "family_id": "fam1", "nickname": "Grandma"}
+            return {"member": {"id": "fam1", "nickname": "Grandma"}}
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post("/api/cheer/update_member/tok", json={"nickname": "Grandma"})
+    assert res.status_code == 200
+    assert res.json() == {"member": {"id": "fam1", "nickname": "Grandma"}}
+
+
+def test_cheer_update_member_rejects_an_unknown_token(monkeypatch):
+    async def fake_call_tool(name, arguments=None):
+        assert name == "resolve_family_token"
+        return {"error": "This link isn't valid."}
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post("/api/cheer/update_member/bad-token", json={"nickname": "x"})
+    assert res.status_code == 404
+
+
+def test_cheer_update_member_ignores_client_supplied_ids(monkeypatch):
+    """family_id/user_id come only from resolving the token server-side,
+    never from the request body -- a client can't redirect the edit to
+    someone else's profile."""
+    async def fake_call_tool(name, arguments=None):
+        if name == "resolve_family_token":
+            return {"user_id": "rose", "member": {"id": "real-fam-id"}}
+        if name == "update_family_member":
+            assert arguments["user_id"] == "rose"
+            assert arguments["family_id"] == "real-fam-id"
+            return {"member": {}}
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post(
+        "/api/cheer/update_member/tok",
+        json={"user_id": "someone_elses_profile", "family_id": "spoofed-id", "nickname": "ok"},
     )
     assert res.status_code == 200

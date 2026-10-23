@@ -40,23 +40,16 @@ async function fetchContext() {
 }
 
 async function updateMember(fields) {
-  const res = await fetch(`/api/tool/update_family_member`, {
+  const res = await fetch(`/api/cheer/update_member/${token}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ family_id: ctx.member.id, user_id: resolvedUserId, ...fields }),
+    body: JSON.stringify(fields),
   });
   return res.json();
 }
 
-let resolvedUserId = null;
-
 async function init() {
   try {
-    const resolved = await (await fetch(`/api/tool/resolve_family_token`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }),
-    })).json();
-    if (resolved.error) { show("invalid"); return; }
-    resolvedUserId = resolved.user_id;
     ctx = await fetchContext();
   } catch {
     ctx = null;
@@ -84,6 +77,7 @@ async function init() {
   el("mode-voice-photo-btn").addEventListener("click", () => chooseMode("voice_photo"));
   el("mode-video-btn").addEventListener("click", () => chooseMode("video"));
   el("photo-input").addEventListener("change", onPhotoChosen);
+  el("upload-input").addEventListener("change", onFileChosen);
   el("start-btn").addEventListener("click", startRecording);
   el("stop-btn").addEventListener("click", stopRecording);
   el("rerecord-btn").addEventListener("click", resetRecording);
@@ -217,10 +211,14 @@ async function onPhotoChosen(e) {
 
 async function startStream() {
   el("record-area").classList.remove("hidden");
+  el("upload-input").accept = mode === "video" ? "video/*" : "audio/*";
   try {
     stream = await navigator.mediaDevices.getUserMedia(mode === "video" ? { audio: true, video: true } : { audio: true });
   } catch {
-    el("cheer-sub").textContent = "Vera couldn't access your microphone or camera. Please allow access and reload the page.";
+    // No mic/camera access (denied, none on this device, etc) -- not a
+    // dead end: "Upload a File Instead" (already visible alongside
+    // Record) still works, so just explain why Record itself won't.
+    el("cheer-sub").textContent = "Vera couldn't access your microphone or camera -- you can upload a file instead, or allow access and reload the page.";
     return;
   }
   if (mode === "video") {
@@ -260,6 +258,10 @@ function stopRecording() {
 function onRecordingStopped() {
   blob = new Blob(chunks, { type: mode === "video" ? "video/webm" : "audio/webm" });
   stream.getTracks().forEach((t) => t.stop());
+  showPreview();
+}
+
+function showPreview() {
   el("record-area").classList.add("hidden");
   el("preview-area").classList.remove("hidden");
   const url = URL.createObjectURL(blob);
@@ -276,6 +278,56 @@ function onRecordingStopped() {
   }
 }
 
+// Reads a local audio/video file's duration without uploading it, so an
+// over-length file is caught before sending -- same way a live recording
+// is capped while it's happening instead of after the fact.
+function readMediaDuration(file, isVideo) {
+  return new Promise((resolve, reject) => {
+    const probe = document.createElement(isVideo ? "video" : "audio");
+    probe.preload = "metadata";
+    probe.onloadedmetadata = () => {
+      URL.revokeObjectURL(probe.src);
+      resolve(probe.duration);
+    };
+    probe.onerror = () => reject(new Error("couldn't read that file"));
+    probe.src = URL.createObjectURL(file);
+  });
+}
+
+async function onFileChosen(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const isVideo = mode === "video";
+  const wantPrefix = isVideo ? "video/" : "audio/";
+  if (!(file.type || "").startsWith(wantPrefix)) {
+    el("cheer-sub").textContent = `Please choose a${isVideo ? " video" : "n audio"} file.`;
+    el("upload-input").value = "";
+    return;
+  }
+  let duration;
+  try {
+    duration = await readMediaDuration(file, isVideo);
+  } catch {
+    el("cheer-sub").textContent = "Vera couldn't read that file -- please try another.";
+    el("upload-input").value = "";
+    return;
+  }
+  if (!isFinite(duration) || duration <= 0) {
+    el("cheer-sub").textContent = "That file looks empty -- please try another.";
+    el("upload-input").value = "";
+    return;
+  }
+  if (duration > MAX_SECONDS + 1) {
+    el("cheer-sub").textContent = `That clip is ${Math.round(duration)} seconds -- please choose one under ${MAX_SECONDS} seconds.`;
+    el("upload-input").value = "";
+    return;
+  }
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  blob = file;
+  elapsed = Math.min(MAX_SECONDS, Math.round(duration));
+  showPreview();
+}
+
 function resetRecorder() {
   mode = null;
   blob = null;
@@ -285,6 +337,7 @@ function resetRecorder() {
   el("photo-row").classList.add("hidden");
   el("photo-preview").classList.add("hidden");
   el("photo-input").value = "";
+  el("upload-input").value = "";
   el("record-area").classList.add("hidden");
   el("preview-area").classList.add("hidden");
   el("playback-video").classList.add("hidden");
@@ -299,6 +352,8 @@ function resetRecorder() {
 
 function resetRecording() {
   blob = null;
+  elapsed = 0;
+  el("upload-input").value = "";
   el("playback-video").classList.add("hidden");
   el("playback-audio").classList.add("hidden");
   el("playback-photo").classList.add("hidden");

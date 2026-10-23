@@ -53,7 +53,7 @@ MODES = ("full", "demo")
 _PUBLIC_PREFIXES = (
     "/css/", "/js/", "/img/", "/media/", "/favicon",
     "/login", "/api/login", "/api/demo-login",
-    "/cheer/", "/api/cheer/context/", "/api/cheer/upload/",
+    "/cheer/", "/api/cheer/context/", "/api/cheer/upload/", "/api/cheer/update_member/",
 )
 
 
