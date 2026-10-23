@@ -13,6 +13,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from vera import cloud_storage
+from vera import cloud_storage, media_convert
 from vera.family import MAX_CHEER_SECONDS, cheer_s3_key
 
 from . import auth, mcp_bridge, polly_tts, rate_limit, ses_email, sms
@@ -287,6 +288,37 @@ async def api_cheer_update_member(token: str, payload: dict):
     return result
 
 
+async def _prepare_cheer_media(content: bytes, content_type: str | None, media_type: str, client_duration: float) -> tuple[bytes, str, float]:
+    """The bytes/extension/duration to actually save for an uploaded cheer
+    recording. With ffmpeg available, converts to the one universal format
+    every cheer is stored as (so a cheer recorded on an iPhone plays back
+    on Android and vice versa) and measures the real duration with ffprobe
+    -- that becomes the authoritative check, not whatever the client
+    claimed, which can be wrong or missing for an uploaded file. Falls
+    back to saving the upload as-is, trusting client_duration, when
+    ffmpeg/ffprobe aren't installed (same "optional unless configured"
+    pattern as cloud_storage/polly/ses)."""
+    is_video = media_type == "video"
+    if not media_convert.available():
+        return content, _media_extension(content_type, media_type), client_duration
+
+    def _convert() -> tuple[bytes, float]:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / f"src.{_media_extension(content_type, media_type)}"
+            dest_ext = media_convert.VIDEO_EXTENSION if is_video else media_convert.AUDIO_EXTENSION
+            dest = Path(tmp) / f"out.{dest_ext}"
+            src.write_bytes(content)
+            duration = media_convert.probe_duration(src)
+            media_convert.convert_to_universal(src, dest, is_video)
+            return dest.read_bytes(), duration
+
+    try:
+        converted, duration = await run_in_threadpool(_convert)
+    except media_convert.ConversionError as e:
+        raise HTTPException(status_code=400, detail=f"That recording couldn't be processed: {e}")
+    return converted, (media_convert.VIDEO_EXTENSION if is_video else media_convert.AUDIO_EXTENSION), duration
+
+
 @app.post("/api/cheer/upload/{token}")
 async def api_cheer_upload(
     token: str,
@@ -323,14 +355,21 @@ async def api_cheer_upload(
     if photo_content and len(photo_content) > MAX_CHEER_BYTES:
         raise HTTPException(status_code=400, detail="That photo is too large.")
 
-    ext = _media_extension(file.content_type, media_type)
+    content, ext, duration_seconds = await _prepare_cheer_media(content, file.content_type, media_type, duration_seconds)
+    if duration_seconds > MAX_CHEER_SECONDS + 1:
+        raise HTTPException(status_code=400, detail=f"Cheers are {MAX_CHEER_SECONDS} seconds max.")
+    if duration_seconds <= 0:
+        raise HTTPException(status_code=400, detail="That recording looks empty.")
+    if len(content) > MAX_CHEER_BYTES:
+        raise HTTPException(status_code=400, detail="That recording is too large.")
+
     filename = f"{uuid.uuid4().hex}.{ext}"
     photo_filename = f"{uuid.uuid4().hex}.jpg" if photo_content else None
 
     storage = "local"
     if cloud_storage.enabled():
         try:
-            content_type = file.content_type or (f"video/{ext}" if media_type == "video" else f"audio/{ext}")
+            content_type = mimetypes.guess_type(filename)[0] or (f"video/{ext}" if media_type == "video" else f"audio/{ext}")
             await run_in_threadpool(cloud_storage.upload_bytes, cheer_s3_key(filename), content, content_type)
             if photo_content:
                 await run_in_threadpool(cloud_storage.upload_bytes, cheer_s3_key(photo_filename), photo_content, photo.content_type or "image/jpeg")

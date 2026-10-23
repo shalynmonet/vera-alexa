@@ -19,6 +19,14 @@ sudo -u "$APP_USER" git pull --ff-only
 echo "==> Installing any new/updated dependencies"
 "$REPO_DIR/.venv/bin/pip" install -q -r "$REPO_DIR/requirements.txt"
 
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "==> Installing ffmpeg (converts Family Cheer recordings to one universal format)"
+  apt-get update -qq
+  apt-get install -y -qq ffmpeg
+else
+  echo "==> ffmpeg already installed"
+fi
+
 echo "==> Re-installing systemd units (in case they changed) and the Caddyfile"
 cp "$REPO_DIR"/deploy/vera-mcp.service "$REPO_DIR"/deploy/vera-web.service \
    "$REPO_DIR"/deploy/vera-demo-reset.service "$REPO_DIR"/deploy/vera-demo-reset.timer \

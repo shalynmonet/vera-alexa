@@ -9,6 +9,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from vera import media_convert as _media_convert
 from web import app as app_module
 from web import auth, mcp_bridge, rate_limit
 
@@ -306,8 +307,14 @@ def test_media_extension_falls_back_when_unknown():
     assert app_module._media_extension("audio/x-some-made-up-codec", "video") == "mp4"
 
 
-def test_cheer_upload_saves_an_uploaded_file_with_its_real_extension(monkeypatch, tmp_path):
+# The two tests below are specifically about the fallback path (no
+# ffmpeg/ffprobe installed) -- with them unavailable, the upload is saved
+# as-is, so the extension still has to match whatever was actually sent.
+# Fake (non-media) bytes are fine here, since nothing tries to decode them.
+
+def test_cheer_upload_saves_an_uploaded_file_with_its_real_extension_without_ffmpeg(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+    monkeypatch.setattr(app_module.media_convert, "available", lambda: False)
     captured = {}
 
     async def fake_call_tool(name, arguments=None):
@@ -330,11 +337,12 @@ def test_cheer_upload_saves_an_uploaded_file_with_its_real_extension(monkeypatch
     assert (tmp_path / captured["file"]).exists()
 
 
-def test_cheer_upload_keeps_webm_for_a_live_browser_recording(monkeypatch, tmp_path):
+def test_cheer_upload_keeps_webm_for_a_live_browser_recording_without_ffmpeg(monkeypatch, tmp_path):
     """Also fixes a pre-existing mismatch: a live video recording is
     really video/webm (MediaRecorder never produces mp4), but used to be
     saved with a hardcoded .mp4 extension regardless."""
     monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+    monkeypatch.setattr(app_module.media_convert, "available", lambda: False)
     captured = {}
 
     async def fake_call_tool(name, arguments=None):
@@ -354,6 +362,116 @@ def test_cheer_upload_keeps_webm_for_a_live_browser_recording(monkeypatch, tmp_p
     )
     assert res.status_code == 200
     assert captured["file"].endswith(".webm")
+
+
+# ---------- ffmpeg conversion: every cheer becomes one universal format,
+# and duration is checked against what the file really is, not what the
+# client claims ----------
+# Skipped outright when ffmpeg isn't installed; see tests/test_media_convert.py.
+
+pytestmark_ffmpeg = pytest.mark.skipif(not _media_convert.available(), reason="ffmpeg/ffprobe not installed")
+
+
+def _wav_bytes(seconds: float, framerate: int = 8000) -> bytes:
+    import io
+    import math
+    import struct
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "w") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(framerate)
+        n = int(framerate * seconds)
+        frames = bytearray()
+        for i in range(n):
+            sample = int(3000 * math.sin(2 * math.pi * 440 * i / framerate))
+            frames += struct.pack("<h", sample)
+        f.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+@pytestmark_ffmpeg
+def test_cheer_upload_converts_an_iphone_style_mp4_voice_note_to_m4a(monkeypatch, tmp_path):
+    """The actual bug: iPhone Safari's MediaRecorder produces audio/mp4,
+    not webm -- it has to be accepted and come out the other side in the
+    one format every cheer is stored as."""
+    monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+    captured = {}
+
+    async def fake_call_tool(name, arguments=None):
+        if name == "resolve_family_token":
+            return {"user_id": "demo", "member": {"id": "fam1"}}
+        if name == "add_cheer":
+            captured.update(arguments)
+            return {"cheer": {"id": "c1"}, "sent_count": 1, "goal": 5}
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    # audio/wav decodes fine through the same mp4/m4a pipeline an iPhone's
+    # actual audio/mp4 recording would -- the point here is the real
+    # media_type content, not reproducing Safari's exact container byte
+    # for byte.
+    res = client.post(
+        "/api/cheer/upload/some-token",
+        data={"media_type": "voice", "duration_seconds": "3"},
+        files={"file": ("iphone-cheer.wav", _wav_bytes(3), "audio/wav")},
+    )
+    assert res.status_code == 200
+    assert captured["file"].endswith(".m4a")
+    assert (tmp_path / captured["file"]).exists()
+    assert (tmp_path / captured["file"]).stat().st_size > 0
+
+
+@pytestmark_ffmpeg
+def test_cheer_upload_rejects_a_clip_whose_real_duration_exceeds_the_cap(monkeypatch, tmp_path):
+    """The client-reported duration is never trusted on its own once
+    ffmpeg is available -- a wrong (or lying) client value doesn't let an
+    over-length recording through."""
+    monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+
+    async def fake_call_tool(name, arguments=None):
+        if name == "resolve_family_token":
+            return {"user_id": "demo", "member": {"id": "fam1"}}
+        raise AssertionError("add_cheer should never be reached -- the real duration must reject this first")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post(
+        "/api/cheer/upload/some-token",
+        # Claims 5 seconds; the file itself is really 20.
+        data={"media_type": "voice", "duration_seconds": "5"},
+        files={"file": ("long.wav", _wav_bytes(20), "audio/wav")},
+    )
+    assert res.status_code == 400
+
+
+@pytestmark_ffmpeg
+def test_cheer_upload_uses_the_probed_duration_not_the_clients_claim(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+    captured = {}
+
+    async def fake_call_tool(name, arguments=None):
+        if name == "resolve_family_token":
+            return {"user_id": "demo", "member": {"id": "fam1"}}
+        if name == "add_cheer":
+            captured.update(arguments)
+            return {"cheer": {"id": "c1"}, "sent_count": 1, "goal": 5}
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post(
+        "/api/cheer/upload/some-token",
+        # Claims 1 second; the file is really ~4 -- still under the cap,
+        # so it should go through, but logged with the real duration.
+        data={"media_type": "voice", "duration_seconds": "1"},
+        files={"file": ("short-claim.wav", _wav_bytes(4), "audio/wav")},
+    )
+    assert res.status_code == 200
+    assert captured["duration_seconds"] == pytest.approx(4, abs=0.3)
 
 
 # ---------- cheer upload validation ----------
@@ -389,10 +507,14 @@ def test_cheer_upload_rejects_an_unrecognized_media_type(monkeypatch):
     assert res.status_code == 400
 
 
-def test_cheer_upload_accepts_a_real_audio_content_type(monkeypatch):
+def test_cheer_upload_accepts_a_real_audio_content_type(monkeypatch, tmp_path):
     """Confirms the validation doesn't just reject everything -- a
     legitimate recording still gets through to the (here, faked) MCP
-    call."""
+    call. Real wav bytes (not just a fake-content stand-in) since a valid
+    recording now also has to survive ffmpeg conversion when it's
+    installed, not just the content-type check."""
+    monkeypatch.setattr(app_module, "CHEER_MEDIA_DIR", tmp_path)
+
     async def fake_call_tool(name, arguments=None):
         if name == "resolve_family_token":
             return {"user_id": "demo", "member": {"id": "fam1", "token": "some-token"}}
@@ -405,7 +527,7 @@ def test_cheer_upload_accepts_a_real_audio_content_type(monkeypatch):
     res = client.post(
         "/api/cheer/upload/some-token",
         data={"media_type": "voice", "duration_seconds": "5"},
-        files={"file": ("cheer.webm", b"fake audio bytes", "audio/webm")},
+        files={"file": ("cheer.webm", _wav_bytes(3), "audio/webm")},
     )
     assert res.status_code == 200
 

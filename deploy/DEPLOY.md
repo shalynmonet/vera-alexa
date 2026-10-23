@@ -57,7 +57,7 @@ cd /opt/vera
 sudo bash deploy/setup.sh
 ```
 
-This installs Python, the venv, Caddy, creates the `vera` system user, installs the systemd units, and writes a starter `/etc/vera/.env` from `.env.example` -- then **stops and tells you to edit it**, since it has no real secrets yet.
+This installs Python, the venv, Caddy, ffmpeg (converts Family Cheer recordings to one universal format so they play back on any device -- see `vera/media_convert.py`), creates the `vera` system user, installs the systemd units, and writes a starter `/etc/vera/.env` from `.env.example` -- then **stops and tells you to edit it**, since it has no real secrets yet.
 
 Edit the real config:
 
@@ -114,7 +114,7 @@ This emails you if spend is tracking over budget; it doesn't stop anything autom
 cd /opt/vera && sudo bash deploy/update.sh
 ```
 
-Pulls the latest `main`, reinstalls any new dependencies, and restarts both services (and reloads Caddy, in case the Caddyfile changed).
+Pulls the latest `main`, reinstalls any new dependencies, installs ffmpeg if an older checkout predates it, and restarts both services (and reloads Caddy, in case the Caddyfile changed).
 
 ## What's running, and why it restarts itself
 

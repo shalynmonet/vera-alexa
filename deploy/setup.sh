@@ -23,7 +23,11 @@ fi
 
 echo "==> Installing system packages"
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip curl debian-keyring debian-archive-keyring apt-transport-https
+# ffmpeg converts every Family Cheer recording (whatever format the
+# recording device/browser actually produced, e.g. an iPhone's mp4) to one
+# universal playable format -- see vera/media_convert.py and web/app.py's
+# /api/cheer/upload/<token>.
+apt-get install -y -qq python3 python3-venv python3-pip curl debian-keyring debian-archive-keyring apt-transport-https ffmpeg
 
 if ! command -v caddy >/dev/null 2>&1; then
   echo "==> Installing Caddy"

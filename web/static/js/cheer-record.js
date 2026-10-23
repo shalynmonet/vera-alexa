@@ -6,6 +6,31 @@ const MAX_SECONDS = 15;
 const token = window.location.pathname.split("/").filter(Boolean).pop();
 const presetMilestone = new URLSearchParams(window.location.search).get("milestone");
 
+// iPhone Safari's MediaRecorder only ever produces mp4 (audio/mp4 or
+// video/mp4), never webm -- recording with a hardcoded "audio/webm" /
+// "video/webm" Blob type there doesn't change what was actually recorded,
+// it just mislabels it, which is exactly what made the preview player show
+// "Error" on iPhone. Ask MediaRecorder itself what it can produce and
+// prefer mp4 (the most broadly compatible for playback), falling back to
+// webm/opus for browsers that only support that.
+const AUDIO_MIME_CANDIDATES = ["audio/mp4", "audio/mp4;codecs=mp4a.40.2", "audio/webm;codecs=opus", "audio/webm"];
+const VIDEO_MIME_CANDIDATES = ["video/mp4", "video/mp4;codecs=avc1,mp4a.40.2", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+
+function pickRecorderMimeType(isVideo) {
+  if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return undefined;
+  const candidates = isVideo ? VIDEO_MIME_CANDIDATES : AUDIO_MIME_CANDIDATES;
+  return candidates.find((t) => MediaRecorder.isTypeSupported(t));
+}
+
+// For naming the upload only -- the server trusts the Blob/File's own
+// Content-Type (set from its real .type), not this filename, to decide
+// what it actually received.
+function extensionForType(type, isVideo) {
+  if ((type || "").includes("mp4")) return isVideo ? "mp4" : "m4a";
+  if ((type || "").includes("webm")) return "webm";
+  return isVideo ? "mp4" : "m4a";
+}
+
 const el = (id) => document.getElementById(id);
 
 let ctx = null; // the /api/cheer/context response
@@ -82,6 +107,9 @@ async function init() {
   el("stop-btn").addEventListener("click", stopRecording);
   el("rerecord-btn").addEventListener("click", resetRecording);
   el("send-btn").addEventListener("click", sendCheer);
+  el("playback-audio").addEventListener("error", showPlaybackError);
+  el("playback-video").addEventListener("error", showPlaybackError);
+  el("preview-error-retry-btn").addEventListener("click", resetRecording);
   el("sent-another-btn").addEventListener("click", showMain);
 }
 
@@ -235,9 +263,19 @@ function renderTimer() {
 
 function startRecording() {
   chunks = [];
-  recorder = new MediaRecorder(stream);
+  const mimeType = pickRecorderMimeType(mode === "video");
+  try {
+    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  } catch {
+    // Some restricted in-app browsers support getUserMedia but not
+    // MediaRecorder at all -- "Upload a File Instead" is still right
+    // there, so this isn't a dead end.
+    el("cheer-sub").textContent = "Vera couldn't start recording here -- you can upload a file instead.";
+    return;
+  }
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   recorder.onstop = onRecordingStopped;
+  recorder.onerror = onRecordingFailed;
   recorder.start();
   elapsed = 0;
   renderTimer();
@@ -256,14 +294,32 @@ function stopRecording() {
 }
 
 function onRecordingStopped() {
-  blob = new Blob(chunks, { type: mode === "video" ? "video/webm" : "audio/webm" });
+  // recorder.mimeType is what it actually recorded (mp4 on iPhone Safari,
+  // usually webm elsewhere) -- never assume, or the Blob is mislabeled
+  // even though the bytes are fine, which is what broke the iPhone
+  // preview player in the first place.
+  const recordedType = recorder.mimeType || (mode === "video" ? "video/webm" : "audio/webm");
+  blob = new Blob(chunks, { type: recordedType });
   stream.getTracks().forEach((t) => t.stop());
+  if (!blob.size) {
+    onRecordingFailed();
+    return;
+  }
   showPreview();
+}
+
+function onRecordingFailed() {
+  clearInterval(timerInterval);
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  el("record-area").classList.add("hidden");
+  showPlaybackError();
 }
 
 function showPreview() {
   el("record-area").classList.add("hidden");
   el("preview-area").classList.remove("hidden");
+  el("preview-error").classList.add("hidden");
+  el("preview-ok").classList.remove("hidden");
   const url = URL.createObjectURL(blob);
   if (mode === "video") {
     el("playback-video").src = url;
@@ -276,6 +332,15 @@ function showPreview() {
       el("playback-photo").classList.remove("hidden");
     }
   }
+}
+
+// However it happens -- a MediaRecorder that errored out, an empty
+// recording, or a preview player that just can't decode what came back --
+// show something actionable instead of a broken player/native error icon.
+function showPlaybackError() {
+  el("preview-area").classList.remove("hidden");
+  el("preview-ok").classList.add("hidden");
+  el("preview-error").classList.remove("hidden");
 }
 
 // Reads a local audio/video file's duration without uploading it, so an
@@ -340,6 +405,8 @@ function resetRecorder() {
   el("upload-input").value = "";
   el("record-area").classList.add("hidden");
   el("preview-area").classList.add("hidden");
+  el("preview-error").classList.add("hidden");
+  el("preview-ok").classList.remove("hidden");
   el("playback-video").classList.add("hidden");
   el("playback-audio").classList.add("hidden");
   el("playback-photo").classList.add("hidden");
@@ -354,6 +421,8 @@ function resetRecording() {
   blob = null;
   elapsed = 0;
   el("upload-input").value = "";
+  el("preview-error").classList.add("hidden");
+  el("preview-ok").classList.remove("hidden");
   el("playback-video").classList.add("hidden");
   el("playback-audio").classList.add("hidden");
   el("playback-photo").classList.add("hidden");
@@ -380,7 +449,8 @@ async function sendCheer() {
   }
 
   const form = new FormData();
-  form.append("file", blob, mode === "video" ? "cheer.webm" : "cheer.webm");
+  const ext = extensionForType(blob.type, mode === "video");
+  form.append("file", blob, `cheer.${ext}`);
   form.append("media_type", mode);
   form.append("duration_seconds", String(elapsed));
   form.append("cheer_type", cheerType);

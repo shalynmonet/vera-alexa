@@ -116,13 +116,19 @@
     </div>
 
     <div id="preview-area" class="hidden">
-      <p class="say-text">Here's your cheer:</p>
-      <img id="playback-photo" class="hidden" alt="" />
-      <video id="playback-video" class="hidden" controls playsinline></video>
-      <audio id="playback-audio" class="hidden" controls></audio>
-      <div class="action-row">
-        <button id="rerecord-btn" class="secondary-btn">Re-record</button>
-        <button id="send-btn" class="primary-btn">Send</button>
+      <div id="preview-ok">
+        <p class="say-text">Here's your cheer:</p>
+        <img id="playback-photo" class="hidden" alt="" />
+        <video id="playback-video" class="hidden" controls playsinline></video>
+        <audio id="playback-audio" class="hidden" controls></audio>
+        <div class="action-row">
+          <button id="rerecord-btn" class="secondary-btn">Re-record</button>
+          <button id="send-btn" class="primary-btn">Send</button>
+        </div>
+      </div>
+      <div id="preview-error" class="hidden">
+        <p class="say-text">Hmm, that recording didn't come through right. Let's try again.</p>
+        <button id="preview-error-retry-btn" class="primary-btn">Try Again</button>
       </div>
     </div>
   </div>
