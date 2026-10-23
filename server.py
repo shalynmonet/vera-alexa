@@ -1045,6 +1045,54 @@ def mark_alert_sent(family_id: str, unplayed: int, user_id: str = "demo") -> dic
     return {"ok": True}
 
 
+# ---------- Demo baseline export ----------
+
+@mcp.tool()
+def export_demo_snapshot(user_id: str = "demo") -> dict:
+    """Snapshot a profile's full state (family, cheers, activity history,
+    memories) for deploy/reset_demo.py to restore from later. Every date
+    is stored as days_ago relative to today, the same convention as
+    demo_profile.json/rose_demo_profile.json, so a restore on some later
+    day can shift them back to absolute dates and streaks still line up.
+    Family member ids/tokens and cheer records (including which media file
+    each one points to) are kept exactly as they are, so a family member's
+    already-shared record link keeps working across a restore, and a
+    restore never needs to touch cheer media on disk. Used by the demo
+    caregiver dashboard's "Save as demo baseline" button -- see
+    web/app.py's /api/demo/save_baseline, which is the only caller and is
+    itself gated behind the real access code."""
+    u = store.get_user(user_id)
+    today = date.today()
+
+    def days_ago(iso: str) -> int:
+        return (today - date.fromisoformat(iso)).days
+
+    activities = [
+        {"type": a["type"], "days_ago": days_ago(a["date"]), "minutes": a["minutes"], "details": a.get("details") or {}}
+        for a in u.get("activities", [])
+    ]
+    memories_out = [
+        {"fact": m["fact"], "days_ago": days_ago(m["recorded_on"]), **({"category": m["category"]} if m.get("category") else {})}
+        for m in u.get("memories", [])
+    ]
+    cheers_out = []
+    for c in u.get("cheers", []):
+        entry = {k: v for k, v in c.items() if k not in ("recorded_on", "played_on")}
+        entry["days_ago_recorded"] = days_ago(c["recorded_on"])
+        entry["days_ago_played"] = days_ago(c["played_on"]) if c.get("played_on") else None
+        cheers_out.append(entry)
+
+    return {
+        "saved_at": datetime.now().isoformat(),
+        "name": u.get("name", "Friend"),
+        "weekly_goal_days": u.get("weekly_goal_days", 4),
+        "activities": activities,
+        "memories": memories_out,
+        "family": u.get("family", []),
+        "cheers": cheers_out,
+    }
+
+
 # ---------- Simulated living room display ----------
 
 @mcp.tool()

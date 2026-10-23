@@ -2,10 +2,10 @@
 and badges look alive on camera. Leaves today empty so a milestone can be
 earned live during the demo video.
 
-Also seeds one family member (a grandson, "Jake") with a cheer already
+Also seeds one family member (a grandson, "Larry") with a cheer already
 recorded and attached to the 7 Day Streak badge -- so the demo can show the
 whole Family Cheers loop: finish today's session live, watch the streak
-badge land, and have Vera immediately play Jake's cheer for it.
+badge land, and have Vera immediately play Larry's cheer for it.
 
 Run:  python seed_demo.py            (name defaults to "Rose")
       python seed_demo.py --name Evelyn
@@ -81,7 +81,7 @@ user["memories"] = [
 
 member = {
     "id": family.new_id(),
-    "name": "Jake",
+    "name": "Larry",
     "phone": "+15555550123",
     "nickname": None,
     "relationship": "Grandson",
@@ -128,6 +128,6 @@ store.save_user(user)
 s = progress.streaks(user["activities"], today)
 print(f"Seeded {args.name}: {len(user['activities'])} sessions, current streak {s['current']}, "
       f"badges {[m['title'] for m in user['milestones']]}")
-print(f"Family: Jake is one cheer away from celebrating {args.name}'s 7 Day Streak -- "
+print(f"Family: Larry is one cheer away from celebrating {args.name}'s 7 Day Streak -- "
       "finish one more session today to see it play. The Cheers screen also has "
       "an anytime cheer waiting and two already played, ready to replay.")

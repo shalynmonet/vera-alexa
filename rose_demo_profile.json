@@ -1,0 +1,38 @@
+{
+  "user_id": "rose_demo",
+  "name": "Rose",
+  "weekly_goal_days": 4,
+  "activity_pattern": {
+    "27": ["stretch"],
+    "26": ["meditation"],
+    "24": ["stretch", "memory_game"],
+    "23": ["meditation"],
+    "20": ["stretch"],
+    "19": ["memory_game"],
+    "17": ["stretch", "meditation"],
+    "16": ["stretch"],
+    "13": ["meditation"],
+    "12": ["stretch"],
+    "10": ["memory_game"],
+    "9": ["stretch"],
+    "6": ["stretch", "meditation"],
+    "5": ["memory_game"],
+    "4": ["stretch"],
+    "3": ["meditation"],
+    "2": ["stretch", "memory_game"],
+    "1": ["meditation"]
+  },
+  "activity_minutes": {
+    "stretch": 8,
+    "meditation": 3,
+    "memory_game": 2
+  },
+  "memories": [
+    {"fact": "She loves spending afternoons in her garden", "days_ago": 5, "category": "hobby"},
+    {"fact": "Her granddaughter Destiny has a volleyball game this weekend", "days_ago": 2, "category": "family"}
+  ],
+  "family": [
+    {"name": "Larry", "phone": "+15555550123", "relationship": "Grandson"}
+  ],
+  "cheers": []
+}

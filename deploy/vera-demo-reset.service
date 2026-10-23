@@ -1,5 +1,5 @@
 [Unit]
-Description=Reset the Vera judge demo profile
+Description=Reset Vera's two no-code demo profiles (Judge Demo and Rose)
 After=network.target
 
 [Service]

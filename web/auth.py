@@ -34,6 +34,12 @@ ACCESS_CODE = os.environ.get("VERA_ACCESS_CODE", "").strip()
 SECRET = (os.environ.get("VERA_SECRET_KEY", "").strip() or ACCESS_CODE).encode()
 
 DEMO_USER_ID = os.environ.get("VERA_DEMO_USER_ID", "judge_demo")
+# A second, full-featured demo profile (history, streak, badges, memories,
+# family) -- same no-code demo button, but picked by name instead of being
+# pinned to a single id, so it can be set up for a recorded walkthrough
+# without ever exposing a real family's data.
+ROSE_DEMO_USER_ID = os.environ.get("VERA_DEMO_ROSE_USER_ID", "rose_demo")
+DEMO_USER_IDS = (DEMO_USER_ID, ROSE_DEMO_USER_ID)
 
 AUTH_COOKIE = "vera_auth"
 DEVICE_COOKIE = "vera_device_id"
@@ -123,8 +129,11 @@ def is_demo(request: Request) -> bool:
 
 
 def effective_user_id(request: Request, requested: str) -> str:
-    """The user_id a request is actually allowed to touch: pinned to the
-    judge demo profile for a demo-mode session no matter what the client
-    asked for, so a real family's data can never be reached from the
-    no-code demo button."""
-    return DEMO_USER_ID if is_demo(request) else requested
+    """The user_id a request is actually allowed to touch: for a demo-mode
+    session, only one of the two fixed demo profiles (DEMO_USER_IDS) is
+    ever reachable, no matter what the client asked for -- defaulting to
+    the judge demo profile for anything else -- so a real family's data
+    can never be reached from the no-code demo button."""
+    if not is_demo(request):
+        return requested
+    return requested if requested in DEMO_USER_IDS else DEMO_USER_ID

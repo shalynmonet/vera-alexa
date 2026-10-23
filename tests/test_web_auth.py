@@ -4,6 +4,8 @@ web/app.py). Uses FastAPI's TestClient against the real app object, with
 mcp_bridge.call_tool monkeypatched so these run with no MCP server, AWS
 credentials, or Bedrock/Polly access needed -- they're testing the gate,
 not what's behind it."""
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -107,7 +109,7 @@ def test_static_assets_need_no_cookie(code_enabled):
 
 # ---------- demo mode is pinned to the judge profile, never a real one ----------
 
-def test_demo_mode_pins_user_id_regardless_of_what_the_client_sends(code_enabled, monkeypatch):
+def test_demo_mode_pins_unrecognized_ids_to_the_judge_profile(code_enabled, monkeypatch):
     captured = {}
 
     async def fake_call_tool(name, arguments=None):
@@ -123,23 +125,105 @@ def test_demo_mode_pins_user_id_regardless_of_what_the_client_sends(code_enabled
     assert captured["arguments"]["user_id"] == auth.DEMO_USER_ID
 
 
+def test_demo_mode_lets_through_the_rose_demo_profile_specifically(code_enabled, monkeypatch):
+    """The fix for Rose's profile being unreachable in demo mode: unlike
+    an arbitrary/real user_id, her fixed demo id is one of the two the
+    no-code button is allowed to touch, so it passes through unchanged
+    instead of being overridden to the judge profile."""
+    captured = {}
+
+    async def fake_call_tool(name, arguments=None):
+        captured["arguments"] = arguments
+        return {"ok": True}
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    demo_cookies = client.post("/api/demo-login").cookies
+    client.post("/api/tool/get_fitness_log", json={"user_id": auth.ROSE_DEMO_USER_ID}, cookies=demo_cookies)
+
+    assert captured["arguments"]["user_id"] == auth.ROSE_DEMO_USER_ID
+
+
 def test_demo_mode_cannot_create_new_profiles(code_enabled):
     demo_cookies = client.post("/api/demo-login").cookies
     res = client.post("/api/tool/create_profile", json={"name": "Someone New"}, cookies=demo_cookies)
     assert res.status_code == 403
 
 
-def test_demo_mode_list_profiles_only_ever_shows_the_demo_profile(code_enabled, monkeypatch):
+def test_demo_mode_list_profiles_shows_both_demo_profiles(code_enabled, monkeypatch):
+    """The two-profile picker: demo mode should offer Judge Demo and Rose,
+    nothing else -- never a real family's profile."""
+    names = {auth.DEMO_USER_ID: "Judge Demo", auth.ROSE_DEMO_USER_ID: "Rose"}
+
     async def fake_call_tool(name, arguments=None):
         assert name == "get_profile"
-        assert arguments["user_id"] == auth.DEMO_USER_ID
-        return {"name": "Judge Demo"}
+        assert arguments["user_id"] in names
+        return {"name": names[arguments["user_id"]]}
 
     monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
 
     demo_cookies = client.post("/api/demo-login").cookies
     res = client.post("/api/tool/list_profiles", json={}, cookies=demo_cookies)
-    assert res.json() == {"profiles": [{"user_id": auth.DEMO_USER_ID, "name": "Judge Demo"}]}
+    assert res.json() == {
+        "profiles": [
+            {"user_id": auth.DEMO_USER_ID, "name": "Judge Demo"},
+            {"user_id": auth.ROSE_DEMO_USER_ID, "name": "Rose"},
+        ]
+    }
+
+
+# ---------- saving Rose's demo baseline ----------
+
+def test_save_baseline_rejects_the_wrong_code(code_enabled, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEMO_BASELINE_DIR", tmp_path)
+
+    async def fake_call_tool(name, arguments=None):
+        raise AssertionError("should never reach the MCP call -- the code check must fail first")
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post("/api/demo/save_baseline", json={"code": "wrong"})
+    assert res.status_code == 403
+    assert not (tmp_path / "rose.json").exists()
+
+
+def test_save_baseline_writes_the_snapshot_with_the_right_code(code_enabled, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEMO_BASELINE_DIR", tmp_path)
+    snapshot = {"saved_at": "2026-10-23T12:00:00", "name": "Rose", "weekly_goal_days": 4,
+                "activities": [], "memories": [], "family": [], "cheers": []}
+
+    async def fake_call_tool(name, arguments=None):
+        assert name == "export_demo_snapshot"
+        assert arguments == {"user_id": auth.ROSE_DEMO_USER_ID}
+        return snapshot
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    res = client.post("/api/demo/save_baseline", json={"code": code_enabled})
+    assert res.status_code == 200
+    assert res.json() == {"ok": True, "saved_at": "2026-10-23T12:00:00"}
+
+    saved = json.loads((tmp_path / "rose.json").read_text(encoding="utf-8"))
+    assert saved == snapshot
+
+
+def test_save_baseline_is_reachable_from_a_demo_mode_session(code_enabled, monkeypatch, tmp_path):
+    """The dashboard button is shown in a demo-mode session too (so the
+    site owner can use it while trying the no-code flow themselves) --
+    it's the access code in the request body that actually gates it, not
+    the cookie's auth mode."""
+    monkeypatch.setattr(app_module, "DEMO_BASELINE_DIR", tmp_path)
+    snapshot = {"saved_at": "now", "name": "Rose", "weekly_goal_days": 4,
+                "activities": [], "memories": [], "family": [], "cheers": []}
+
+    async def fake_call_tool(name, arguments=None):
+        return snapshot
+
+    monkeypatch.setattr(mcp_bridge, "call_tool", fake_call_tool)
+
+    demo_cookies = client.post("/api/demo-login").cookies
+    res = client.post("/api/demo/save_baseline", json={"code": code_enabled}, cookies=demo_cookies)
+    assert res.status_code == 200
 
 
 def test_full_mode_does_not_pin_user_id(code_enabled, monkeypatch):

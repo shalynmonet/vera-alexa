@@ -1,5 +1,5 @@
 [Unit]
-Description=Reset the Vera judge demo profile nightly
+Description=Reset Vera's two no-code demo profiles nightly
 
 [Timer]
 # 03:00 server time -- quiet hours, unlikely to interrupt anyone

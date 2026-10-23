@@ -3,5 +3,6 @@ __pycache__/
 .pytest_cache/
 data/*.json
 data/*.tmp
+data/demo_baselines/
 web/audio_cache/
 web/cheer_media/

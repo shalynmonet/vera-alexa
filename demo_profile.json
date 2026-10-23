@@ -34,10 +34,5 @@
   "family": [
     {"name": "Sam", "phone": "+15555550199", "relationship": "Grandson"}
   ],
-  "cheers": [
-    {"cheer_type": "milestone", "target": "streak_7", "status": "locked", "days_ago": 1},
-    {"cheer_type": "anytime", "target": null, "status": "unlocked", "days_ago": 2},
-    {"cheer_type": "anytime", "target": null, "status": "played", "days_ago": 5, "played": true},
-    {"cheer_type": "milestone", "target": "first_session", "status": "played", "days_ago": 20, "played": true}
-  ]
+  "cheers": []
 }

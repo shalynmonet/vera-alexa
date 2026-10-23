@@ -113,13 +113,15 @@ async def api_call_tool(name: str, request: Request, arguments: dict | None = No
         if name == "create_profile":
             raise HTTPException(status_code=403, detail="The demo profile can't create new profiles.")
         if name == "list_profiles":
-            try:
-                profile = await mcp_bridge.call_tool("get_profile", {"user_id": auth.DEMO_USER_ID})
-                demo_name = profile.get("name", "Demo")
-            except mcp_bridge.ToolError:
-                demo_name = "Demo"
-            return {"profiles": [{"user_id": auth.DEMO_USER_ID, "name": demo_name}]}
-        arguments["user_id"] = auth.DEMO_USER_ID
+            profiles = []
+            for uid in auth.DEMO_USER_IDS:
+                try:
+                    profile = await mcp_bridge.call_tool("get_profile", {"user_id": uid})
+                    profiles.append({"user_id": uid, "name": profile.get("name", "Demo")})
+                except mcp_bridge.ToolError:
+                    profiles.append({"user_id": uid, "name": "Demo"})
+            return {"profiles": profiles}
+        arguments["user_id"] = auth.effective_user_id(request, arguments.get("user_id", "demo"))
     try:
         return await mcp_bridge.call_tool(name, arguments)
     except mcp_bridge.ToolError as e:
@@ -183,6 +185,34 @@ async def cheer_record_page(token: str):
 @app.get("/caregiver/{user_id}")
 async def caregiver_dashboard_page(user_id: str):
     return FileResponse(str(STATIC_DIR / "caregiver" / "dashboard.html"))
+
+
+# ---------- Demo profile baseline ----------
+# The Rose demo profile resets nightly (deploy/reset_demo.py) from either
+# this saved baseline or, if none exists yet, rose_demo_profile.json. This
+# endpoint is how "Save as demo baseline" on her caregiver dashboard
+# captures whatever she currently looks like (family, cheers, history,
+# memories) as that baseline. Reachable from a demo-mode session (the
+# dashboard itself is), but requires the real access code regardless of
+# cookie mode -- a demo visitor can look, but only the real site owner can
+# lock in a new baseline.
+
+DEMO_BASELINE_DIR = Path(os.environ.get(
+    "VERA_DEMO_BASELINE_DIR", str(Path(__file__).resolve().parent.parent / "data" / "demo_baselines"),
+))
+
+
+@app.post("/api/demo/save_baseline")
+async def api_save_demo_baseline(payload: dict):
+    if not auth.check_code(payload.get("code", "")):
+        raise HTTPException(status_code=403, detail="Incorrect access code.")
+    try:
+        snapshot = await mcp_bridge.call_tool("export_demo_snapshot", {"user_id": auth.ROSE_DEMO_USER_ID})
+    except mcp_bridge.ToolError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    DEMO_BASELINE_DIR.mkdir(parents=True, exist_ok=True)
+    (DEMO_BASELINE_DIR / "rose.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    return {"ok": True, "saved_at": snapshot["saved_at"]}
 
 
 @app.get("/api/cheer/context/{token}")

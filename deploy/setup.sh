@@ -92,7 +92,7 @@ if [[ "$NEEDS_EDIT" -eq 1 ]]; then
 
     Then run this script again (or just):
       sudo systemctl start vera-mcp vera-web caddy
-      sudo systemctl start vera-demo-reset.service   # seeds the demo profile now, instead of waiting for 3am
+      sudo systemctl start vera-demo-reset.service   # seeds both demo profiles now, instead of waiting for 3am
 EOF
   exit 0
 fi

@@ -6,6 +6,12 @@
 const userId = window.location.pathname.split("/").filter(Boolean).pop();
 const el = (id) => document.getElementById(id);
 
+// Keep in sync with web/auth.py's ROSE_DEMO_USER_ID default -- only this
+// one profile's dashboard offers "Save as demo baseline" (see initDashboard
+// below), since it's the only one the nightly reset restores from a
+// baseline rather than a fixed seed file.
+const ROSE_DEMO_USER_ID = "rose_demo";
+
 function escapeHtml(s) {
   const d = document.createElement("div");
   d.textContent = s;
@@ -182,7 +188,33 @@ el("fam-add-btn").addEventListener("click", async () => {
   loadNudgesAndFamily();
 });
 
+el("save-baseline-btn").addEventListener("click", async () => {
+  const code = window.prompt("Enter the access code to save this as the new demo baseline:");
+  if (code === null) return;
+  const statusEl = el("save-baseline-status");
+  statusEl.classList.remove("hidden");
+  statusEl.textContent = "Saving…";
+  try {
+    const res = await fetch("/api/demo/save_baseline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (res.status === 403) {
+      statusEl.textContent = "That access code wasn't right -- nothing was saved.";
+      return;
+    }
+    if (!res.ok) throw new Error("save_baseline failed");
+    const { saved_at } = await res.json();
+    const when = new Date(saved_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    statusEl.textContent = `Saved! The nightly reset will restore Rose to exactly this as of ${when}.`;
+  } catch {
+    statusEl.textContent = "Something went wrong saving the baseline -- please try again.";
+  }
+});
+
 (async function initDashboard() {
+  if (userId === ROSE_DEMO_USER_ID) el("dash-demo-tools").classList.remove("hidden");
   try {
     const profile = await api("get_profile");
     recipientFirstName = profile.name.split(" ")[0];

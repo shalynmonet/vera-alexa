@@ -77,7 +77,7 @@ Save, then run setup again to actually start everything (it's safe to re-run -- 
 sudo bash deploy/setup.sh
 ```
 
-This also runs the demo-profile reset once immediately, so `judge_demo` has real-looking data from the start instead of waiting for the 3am timer.
+This also runs the demo-profile reset once immediately, so both demo profiles (`judge_demo` and `rose_demo`) have real-looking data from the start instead of waiting for the 3am timer.
 
 ## 7. Check it worked
 
@@ -120,7 +120,7 @@ Pulls the latest `main`, reinstalls any new dependencies, and restarts both serv
 
 - `vera-mcp.service` -- the MCP server (`server.py`), bound to `127.0.0.1:8000`.
 - `vera-web.service` -- the web app (`web/app.py`), bound to `127.0.0.1:8080`, depends on `vera-mcp`.
-- `vera-demo-reset.timer` -- runs `deploy/reset_demo.py` nightly at 3am, resetting the no-code judge demo profile from `demo_profile.json`.
+- `vera-demo-reset.timer` -- runs `deploy/reset_demo.py` nightly at 3am, resetting both no-code demo profiles: `judge_demo` from `demo_profile.json`, and `rose_demo` from her saved baseline (`data/demo_baselines/rose.json`, written by "Save as demo baseline" on her caregiver dashboard) or `rose_demo_profile.json` if she has no baseline yet.
 - Caddy -- reverse proxies `vera.sha-i.com` to both of the above (`/mcp*` to the MCP server, everything else to the web app) and handles HTTPS automatically.
 
 All three app units have `Restart=always` and are `systemctl enable`d, so they come back after a crash and after a reboot without anyone logging back in.
