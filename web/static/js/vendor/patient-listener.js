@@ -1,3 +1,6 @@
+// Vendored from https://github.com/shalynmonet/patient-listener, tag v1.0.0
+// -- update this file (and the tag noted here) together if it changes.
+//
 // patient-listener: a continuous speech-capture helper for the Web Speech
 // API that decides for itself when someone is done talking, instead of
 // handing back whatever the browser's own recognizer happened to catch
