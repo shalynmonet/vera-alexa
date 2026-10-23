@@ -22,6 +22,17 @@ cheers of its own (there's nothing to place there), and a restored
 baseline's cheers just point to files a real recording already put
 there, which nothing here -- or anywhere else -- ever removes.
 
+While there's no saved baseline yet, a reset SKIPS Rose instead of
+overwriting her if she already has real content beyond the plain seed
+(a family member added through her dashboard, a cheer actually recorded)
+-- otherwise the nightly timer firing mid-setup would silently throw that
+away before there was ever a baseline to restore it from. Rose's seeded
+family member (Larry) also gets a fixed id/token from the seed file
+itself rather than a fresh one every run, so his record-page link
+survives repeated resets during that same setup window. Set
+VERA_DEMO_FORCE_RESET=1 to discard her current state and start over from
+rose_demo_profile.json anyway.
+
 Meant to run nightly via the vera-demo-reset systemd timer (installed by
 deploy/setup.sh); safe to run by hand too.
 
@@ -44,6 +55,7 @@ from vera.storage import Store  # noqa: E402
 
 JUDGE_PROFILE_PATH = ROOT / "demo_profile.json"
 ROSE_SEED_PATH = ROOT / "rose_demo_profile.json"
+FORCE_RESET = os.environ.get("VERA_DEMO_FORCE_RESET", "").strip().lower() in ("1", "true", "yes")
 # Same directory web/app.py's /api/demo/save_baseline writes to -- both
 # sides respect VERA_DEMO_BASELINE_DIR so they always agree on where it is.
 DEMO_BASELINE_DIR = Path(os.environ.get("VERA_DEMO_BASELINE_DIR", str(ROOT / "data" / "demo_baselines")))
@@ -66,8 +78,11 @@ def _new_user_shell(user_id: str, name: str, weekly_goal_days: int) -> dict:
 def _user_from_seed(profile: dict, user_id: str, today: date) -> dict:
     """A fresh user record from a demo_profile.json-style seed:
     activity_pattern/activity_minutes, memories with days_ago, and a
-    family list that gets brand new ids/tokens -- never seeded with
-    cheers (see module docstring)."""
+    family list -- never seeded with cheers (see module docstring). A
+    family member's id/token come from the seed file when it gives them
+    (rose_demo_profile.json does, so Larry's record-page link stays the
+    same across every reset until a real baseline takes over); otherwise
+    a fresh one is generated, as demo_profile.json's Sam always gets."""
     user = _new_user_shell(user_id, profile.get("name", "Friend"), profile.get("weekly_goal_days", 4))
 
     minutes_by_type = profile.get("activity_minutes", {})
@@ -93,7 +108,7 @@ def _user_from_seed(profile: dict, user_id: str, today: date) -> dict:
     ]
     user["family"] = [
         {
-            "id": family.new_id(),
+            "id": fm.get("id") or family.new_id(),
             "name": fm["name"],
             "phone": fm.get("phone"),
             "nickname": fm.get("nickname"),
@@ -102,7 +117,7 @@ def _user_from_seed(profile: dict, user_id: str, today: date) -> dict:
             "email_opt_in": fm.get("email_opt_in", False),
             "onboarded": True,
             "low_queue_notified_at": None,
-            "token": family.new_token(),
+            "token": fm.get("token") or family.new_token(),
         }
         for fm in profile.get("family", [])
     ]
@@ -163,6 +178,14 @@ def _report(label: str, user: dict, today: date, source: str | None = None) -> N
     )
 
 
+def _rose_has_unsaved_work(existing: dict, seed_family_count: int) -> bool:
+    """True if Rose's current profile already has real content (more
+    family members than the plain seed defines, or any recorded cheer) a
+    seed-based reset would silently throw away. Only consulted when
+    there's no saved baseline to restore from instead."""
+    return len(existing.get("family", [])) > seed_family_count or bool(existing.get("cheers"))
+
+
 def main() -> None:
     today = date.today()
     store = Store()
@@ -180,13 +203,25 @@ def main() -> None:
     if ROSE_BASELINE_PATH.exists():
         snapshot = json.loads(ROSE_BASELINE_PATH.read_text(encoding="utf-8"))
         rose_user = _user_from_baseline(snapshot, rose_user_id, today)
-        source = f"baseline saved {snapshot.get('saved_at', 'previously')}"
-    else:
-        rose_profile = json.loads(ROSE_SEED_PATH.read_text(encoding="utf-8"))
-        rose_user = _user_from_seed(rose_profile, rose_user_id, today)
-        source = "rose_demo_profile.json -- no baseline saved yet"
+        store.save_user(rose_user)
+        _report("Rose", rose_user, today, source=f"baseline saved {snapshot.get('saved_at', 'previously')}")
+        return
+
+    rose_profile = json.loads(ROSE_SEED_PATH.read_text(encoding="utf-8"))
+    existing = store.get_user(rose_user_id)
+    if not FORCE_RESET and _rose_has_unsaved_work(existing, len(rose_profile.get("family", []))):
+        print(
+            f"Skipped resetting 'Rose': she has {len(existing.get('family', []))} family "
+            f"member(s) and {len(existing.get('cheers', []))} cheer(s) beyond the plain seed, with "
+            "no baseline saved yet -- a reset would throw that away. Save a baseline from her "
+            "caregiver dashboard first, or re-run with VERA_DEMO_FORCE_RESET=1 to discard it and "
+            "start over from rose_demo_profile.json."
+        )
+        return
+
+    rose_user = _user_from_seed(rose_profile, rose_user_id, today)
     store.save_user(rose_user)
-    _report("Rose", rose_user, today, source=source)
+    _report("Rose", rose_user, today, source="rose_demo_profile.json -- no baseline saved yet")
 
 
 if __name__ == "__main__":

@@ -81,11 +81,119 @@ def test_reset_demo_falls_back_to_rose_seed_with_no_baseline_saved(tmp_path):
     assert streak["current"] == 6  # one session away from the 7 day streak
 
 
+def test_reset_demo_gives_larry_the_same_link_every_time(tmp_path):
+    """Regression: Larry's token used to be regenerated on every seed-based
+    reset, silently breaking any link already copied/texted/recorded
+    through. His id/token now come from rose_demo_profile.json itself, so
+    repeated resets (e.g. the nightly timer firing during setup) never
+    change them."""
+    data_path = tmp_path / "vera.json"
+    baseline_dir = tmp_path / "baselines"
+    _run(data_path, baseline_dir)
+    first = Store(data_path).get_user("rose_demo")["family"][0]
+
+    _run(data_path, baseline_dir)
+    second = Store(data_path).get_user("rose_demo")["family"][0]
+
+    assert first["token"] == second["token"]
+    assert first["id"] == second["id"]
+
+
 def test_reset_demo_respects_a_custom_rose_user_id(tmp_path):
     data_path = tmp_path / "vera.json"
     _run(data_path, tmp_path / "baselines", extra_env={"VERA_DEMO_ROSE_USER_ID": "custom_rose_id"})
     user = Store(data_path).get_user("custom_rose_id")
     assert user["name"] == "Rose"
+
+
+# ---------- Rose: a reset never silently wipes in-progress setup ----------
+
+def test_reset_demo_skips_rose_once_she_has_unsaved_family_beyond_the_seed(tmp_path):
+    data_path = tmp_path / "vera.json"
+    baseline_dir = tmp_path / "baselines"
+    _run(data_path, baseline_dir)  # first reset: plain seed, just Larry
+
+    store = Store(data_path)
+    rose = store.get_user("rose_demo")
+    rose["family"].append({
+        "id": "real-shalyn-id", "name": "Shalyn", "phone": "+15555550199", "nickname": "Granny",
+        "relationship": "Daughter", "email": None, "email_opt_in": False,
+        "onboarded": True, "low_queue_notified_at": None, "token": "real-shalyn-token",
+    })
+    store.save_user(rose)
+
+    result = _run(data_path, baseline_dir)
+    assert "Skipped resetting 'Rose'" in result.stdout
+
+    reset_rose = Store(data_path).get_user("rose_demo")
+    assert len(reset_rose["family"]) == 2
+    assert any(m["name"] == "Shalyn" for m in reset_rose["family"])
+
+
+def test_reset_demo_skips_rose_once_she_has_an_unsaved_cheer(tmp_path):
+    data_path = tmp_path / "vera.json"
+    baseline_dir = tmp_path / "baselines"
+    _run(data_path, baseline_dir)
+
+    store = Store(data_path)
+    rose = store.get_user("rose_demo")
+    rose["cheers"].append({
+        "id": "c1", "family_id": rose["family"][0]["id"], "family_name": "Larry",
+        "cheer_type": "anytime", "target": None, "media_type": "voice", "file": "real-recording.webm",
+        "photo_file": None, "storage": "local", "duration_seconds": 6, "activities_at_recording": 10,
+        "status": "unlocked", "recorded_on": date.today().isoformat(), "played_on": None,
+    })
+    store.save_user(rose)
+
+    result = _run(data_path, baseline_dir)
+    assert "Skipped resetting 'Rose'" in result.stdout
+    assert Store(data_path).get_user("rose_demo")["cheers"]  # still there
+
+
+def test_reset_demo_force_reset_discards_unsaved_rose_work(tmp_path):
+    data_path = tmp_path / "vera.json"
+    baseline_dir = tmp_path / "baselines"
+    _run(data_path, baseline_dir)
+
+    store = Store(data_path)
+    rose = store.get_user("rose_demo")
+    rose["cheers"].append({
+        "id": "c1", "family_id": rose["family"][0]["id"], "family_name": "Larry",
+        "cheer_type": "anytime", "target": None, "media_type": "voice", "file": "real-recording.webm",
+        "photo_file": None, "storage": "local", "duration_seconds": 6, "activities_at_recording": 10,
+        "status": "unlocked", "recorded_on": date.today().isoformat(), "played_on": None,
+    })
+    store.save_user(rose)
+
+    _run(data_path, baseline_dir, extra_env={"VERA_DEMO_FORCE_RESET": "1"})
+    assert Store(data_path).get_user("rose_demo")["cheers"] == []
+
+
+def test_reset_demo_baseline_takes_priority_over_the_unsaved_work_guard(tmp_path):
+    """Once a baseline exists, that's the source of truth regardless --
+    the guard only applies to the no-baseline fallback path."""
+    data_path = tmp_path / "vera.json"
+    baseline_dir = tmp_path / "baselines"
+    _run(data_path, baseline_dir)
+
+    store = Store(data_path)
+    rose = store.get_user("rose_demo")
+    rose["family"].append({
+        "id": "real-shalyn-id", "name": "Shalyn", "phone": None, "nickname": None, "relationship": None,
+        "email": None, "email_opt_in": False, "onboarded": True, "low_queue_notified_at": None, "token": "t",
+    })
+    store.save_user(rose)
+
+    baseline_dir.mkdir(exist_ok=True)
+    snapshot = {
+        "saved_at": "2026-10-20T09:00:00", "name": "Rose", "weekly_goal_days": 4,
+        "activities": [], "memories": [], "family": [], "cheers": [],
+    }
+    (baseline_dir / "rose.json").write_text(json.dumps(snapshot), encoding="utf-8")
+
+    result = _run(data_path, baseline_dir)
+    assert "Skipped" not in result.stdout
+    assert Store(data_path).get_user("rose_demo")["family"] == []
 
 
 # ---------- Rose: restores from a saved baseline when one exists ----------

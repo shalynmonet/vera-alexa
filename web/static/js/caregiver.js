@@ -102,7 +102,10 @@ async function loadNudgesAndFamily() {
     family.forEach((m) => {
       const btn = document.createElement("button");
       btn.className = "secondary-btn";
-      btn.textContent = `Copy link for ${m.nickname || m.name}`;
+      // m.nickname is what THIS family member calls the recipient (e.g.
+      // "Granny" for Rose), not their own name -- the button identifies
+      // the family member, so it's always m.name.
+      btn.textContent = `Copy link for ${m.name}`;
       const link = `${window.location.origin}/cheer/${m.token}?milestone=${encodeURIComponent(n.id)}`;
       btn.addEventListener("click", () => copyToClipboard(link, btn));
       row.appendChild(btn);
